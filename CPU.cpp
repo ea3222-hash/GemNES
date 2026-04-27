@@ -21,14 +21,16 @@ void CPU::ConnectBus(Bus* n) { bus = n; }
 
 uint8_t CPU::read(uint16_t addr) { 
     uint8_t data = bus->cpuRead(addr, open_bus);
-    if (addr != 0x4015) { open_bus = data; }
+    if (addr != 0x4015) { open_bus = data; } 
     
     bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
+    
+    // Read boundary triggers NMI instantly
     if (bus->ppu.nmi) { bus->ppu.nmi = false; nmi_pending = true; }
     if (bus->cart && bus->cart->irqState()) { irq_pending = true; } else { irq_pending = false; }
     
     cycles++; 
-    total_cycles++; // --- Track absolute hardware ticks ---
+    total_cycles++; 
     return data; 
 }
 
@@ -37,11 +39,13 @@ void CPU::write(uint16_t addr, uint8_t data) {
     
     bus->cpuWrite(addr, data);
     bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
+    
+    // Write boundary delays NMI by 1 instruction
     if (bus->ppu.nmi) { bus->ppu.nmi = false; nmi_delay = true; }
     if (bus->cart && bus->cart->irqState()) { irq_pending = true; } else { irq_pending = false; }
     
     cycles++; 
-    total_cycles++; // --- Track absolute hardware ticks ---
+    total_cycles++; 
 }
 
 void CPU::setFlag(Flags flag, bool value) { if (value) P |= flag; else P &= ~flag; }
@@ -228,10 +232,7 @@ int CPU::step() {
     if (nmi_pending) { nmi_pending = false; nmi(); return cycles; }
     if (nmi_delay) { nmi_delay = false; nmi_pending = true; } 
     
-    if ((irq_pending || bus->apu.irq_active || bus->apu.dmc_irq) && !getFlag(I)) { 
-        irq(); 
-        return cycles; 
-    }
+    if ((irq_pending || bus->apu.irq_active || bus->apu.dmc_irq) && !getFlag(I)) { irq(); return cycles; }
     
     cycles = 0;
     current_opcode = read(PC++); 
@@ -314,11 +315,6 @@ int CPU::step() {
         case 0xBB: ABY(); LAE(); break;
 
         default: read(PC); break;
-    }
-
-    if (bus->ppu.nmi) {
-        bus->ppu.nmi = false;
-        nmi_delay = true; 
     }
 
     return cycles;
