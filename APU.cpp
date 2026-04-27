@@ -21,6 +21,10 @@ const uint16_t noise_timer_table[16] = {
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
 };
 
+const uint16_t dmc_rate_table[16] = {
+    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54
+};
+
 APU::APU() {}
 APU::~APU() {}
 
@@ -37,8 +41,6 @@ void APU::reset() {
     irq_active = false;
     dmc_irq = false;
     dmc_irq_enable = false;
-    frame_counter_reset_delay = 0;
-    delayed_frame_mode = 0;
 }
 
 void APU::cpuWrite(uint16_t addr, uint8_t data) {
@@ -60,9 +62,14 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
         case 0x400F: if (noise.enable) noise.length_counter = length_table[(data & 0xF8) >> 3]; noise.env_start = true; break;
 
         case 0x4010: 
-            // --- FIX: DMC IRQ Hardware Toggle ---
             dmc_irq_enable = (data & 0x80) > 0; 
+            dmc.loop = (data & 0x40) > 0;
+            dmc.timer_reload = dmc_rate_table[data & 0x0F];
             if (!dmc_irq_enable) dmc_irq = false; 
+            break;
+            
+        case 0x4013:
+            dmc.reload_length = (data * 16) + 1;
             break;
 
         case 0x4015:
@@ -70,17 +77,33 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
             pulse2.enable = data & 0x02; if (!pulse2.enable) pulse2.length_counter = 0;
             triangle.enable = data & 0x04; if (!triangle.enable) triangle.length_counter = 0;
             noise.enable = data & 0x08; if (!noise.enable) noise.length_counter = 0;
-            dmc.enable = data & 0x10; if (!dmc.enable) dmc.length_counter = 0; 
             
-            dmc_irq = false; // --- FIX: Writing to $4015 explicitly clears the DMC IRQ ---
+            if ((data & 0x10) == 0) {
+                dmc.enable = false;
+                dmc.length_counter = 0;
+            } else {
+                dmc.enable = true;
+                if (dmc.length_counter == 0) {
+                    dmc.length_counter = dmc.reload_length;
+                    dmc.bit_counter = 0;
+                }
+            }
+            dmc_irq = false; 
             break;
             
         case 0x4017:
-            delayed_frame_mode = (data & 0x80) >> 7;
+            frame_mode = (data & 0x80) >> 7;
             irq_inhibit = (data & 0x40) >> 6;
             
-            irq_active = false; // --- FIX: Writing $4017 ALWAYS clears the Frame IRQ ---
-            frame_counter_reset_delay = (clock_counter % 2 == 0) ? 4 : 3; 
+            // --- FIX: Unconditionally clear the active IRQ flag ---
+            irq_active = false; 
+            
+            // --- FIX: Instant Frame Reset restores 4-Step and 5-Step timing ---
+            frame_counter = 0;
+            if (frame_mode == 1) { 
+                clock_lengths();
+                clock_envelopes();
+            }
             break;
     }
 }
@@ -95,10 +118,9 @@ uint8_t APU::cpuRead(uint16_t addr, uint8_t open_bus) {
         if (noise.length_counter > 0) data |= 0x08;
         if (dmc.length_counter > 0) data |= 0x10;
         if (irq_active) data |= 0x40; 
+        if (dmc_irq) data |= 0x80; 
         
-        if (dmc_irq) data |= 0x80; // --- FIX: Inject DMC IRQ to Bit 7 ---
-        
-        irq_active = false; // Reading $4015 ONLY clears frame IRQ (not DMC IRQ)
+        irq_active = false; 
     }
     return data;
 }
@@ -130,18 +152,6 @@ void APU::clock_lengths() {
 }
 
 void APU::step() {
-    if (frame_counter_reset_delay > 0) {
-        frame_counter_reset_delay--;
-        if (frame_counter_reset_delay == 0) {
-            frame_counter = 0;
-            frame_mode = delayed_frame_mode;
-            if (frame_mode == 1) { 
-                clock_lengths();
-                clock_envelopes();
-            }
-        }
-    }
-
     if (triangle.timer > 0) triangle.timer--;
     else {
         triangle.timer = triangle.timer_reload;
@@ -159,6 +169,26 @@ void APU::step() {
             uint16_t bit1 = noise.shift_register & 0x0001;
             uint16_t bit2 = (noise.shift_register >> shift_amount) & 0x0001;
             noise.shift_register = (noise.shift_register >> 1) | ((bit1 ^ bit2) << 14);
+        }
+    }
+
+    if (dmc.length_counter > 0) {
+        if (dmc.timer > 0) {
+            dmc.timer--;
+        } else {
+            dmc.timer = dmc.timer_reload;
+            dmc.bit_counter++;
+            if (dmc.bit_counter >= 8) {
+                dmc.bit_counter = 0;
+                dmc.length_counter--;
+                if (dmc.length_counter == 0) {
+                    if (dmc.loop) {
+                        dmc.length_counter = dmc.reload_length;
+                    } else if (dmc_irq_enable) {
+                        dmc_irq = true;
+                    }
+                }
+            }
         }
     }
 
