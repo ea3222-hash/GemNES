@@ -1,7 +1,7 @@
 #include "PPU.h"
 #include <cstring>
 #include <cstdlib>
-#include <algorithm> // Needed for std::min
+#include <algorithm> 
 
 PPU::PPU() {
     uint32_t hex_colors[64] = {
@@ -75,17 +75,21 @@ uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
             break;
             
         case 0x0004:
-            if ((mask & 0x18) && (scanline >= 0 && scanline < 240)) data = 0xFF;
-            else data = OAM[oam_addr];
+            data = OAM[oam_addr];
+            if ((oam_addr & 0x03) == 0x02) {
+                data &= 0xE3; 
+            }
             break;
             
         case 0x0007:
             data = ppu_data_buffer;
             ppu_data_buffer = ppuRead(v);
+            
             if (v >= 0x3F00) {
                 data = (ppu_data_buffer & 0x3F) | (ppu_open_bus & 0xC0);
                 ppu_data_buffer = ppuRead(v & 0x2FFF); 
             }
+            
             if ((mask & 0x18) && (scanline >= 0 && scanline < 240)) {
                 if ((v & 0x001F) == 31) { v &= ~0x001F; v ^= 0x0400; } else { v++; }
                 if ((v & 0x7000) != 0x7000) { v += 0x1000; }
@@ -108,7 +112,9 @@ void PPU::cpuWrite(uint16_t addr, uint8_t data) {
         case 0x0000: control = data; t = (t & 0xF3FF) | ((data & 0x03) << 10); update_nmi(); break;
         case 0x0001: mask = data; break;
         case 0x0003: oam_addr = data; break;
-        case 0x0004: if (!((mask & 0x18) && (scanline >= 0 && scanline < 240))) OAM[oam_addr++] = data; break;
+        case 0x0004: 
+            OAM[oam_addr++] = data; 
+            break;
         case 0x0005:
             if (w == 0) { x = data & 0x07; t = (t & 0xFFE0) | (data >> 3); w = 1; }
             else        { t = (t & 0x8FFF) | ((data & 0x07) << 12); t = (t & 0xFC1F) | ((data & 0xF8) << 2); w = 0; }
@@ -158,7 +164,10 @@ uint8_t PPU::ppuRead(uint16_t addr) {
     } 
     else if (addr >= 0x3F00 && addr <= 0x3FFF) {
         addr &= 0x001F;
-        if (addr == 0x10 || addr == 0x14 || addr == 0x18 || addr == 0x1C) addr -= 0x10;
+        if (addr == 0x10) addr = 0x00;
+        else if (addr == 0x14) addr = 0x04;
+        else if (addr == 0x18) addr = 0x08;
+        else if (addr == 0x1C) addr = 0x0C;
         data = paletteTable[addr] & 0x3F;
     }
     return data;
@@ -187,8 +196,11 @@ void PPU::ppuWrite(uint16_t addr, uint8_t data) {
     } 
     else if (addr >= 0x3F00 && addr <= 0x3FFF) {
         addr &= 0x001F;
-        if (addr == 0x10 || addr == 0x14 || addr == 0x18 || addr == 0x1C) addr -= 0x10;
-        paletteTable[addr] = data;
+        if (addr == 0x10) addr = 0x00;
+        else if (addr == 0x14) addr = 0x04;
+        else if (addr == 0x18) addr = 0x08;
+        else if (addr == 0x1C) addr = 0x0C;
+        paletteTable[addr] = data & 0x3F; 
     }
 }
 
@@ -241,13 +253,17 @@ void PPU::step() {
             if (scanline == -1 && cycle >= 280 && cycle < 305) v = (v & ~0x7BE0) | (t & 0x7BE0); 
         }
 
-        if (cycle == 257 && scanline >= 0) {
+        // --- FIX: Restored the exact logic that passed Suddenly Resize Sprite and Sprite Overflow ---
+        if (cycle == 257 && scanline >= -1 && scanline < 240) {
             memset(spriteScanline, 0xFF, sizeof(spriteScanline));
             sprite_count = 0;
+            
             int spriteSize = (control & 0x20) ? 16 : 8; 
+
             int OAMEntry = 0;
             while (OAMEntry < 64 && sprite_count < 9) {
-                int diff = ((int16_t)scanline - (int16_t)OAM[OAMEntry * 4]);
+                // By using raw int math, scanline -1 is evaluated safely!
+                int diff = scanline - OAM[OAMEntry * 4];
                 if (diff >= 0 && diff < spriteSize) {
                     if (sprite_count < 8) {
                         spriteScanline[sprite_count].y = OAM[OAMEntry * 4];
@@ -263,8 +279,7 @@ void PPU::step() {
             if (sprite_count > 8) status |= 0x20; 
         }
 
-        if (cycle == 340) {
-            // --- FIX: Cap Sprite Count array bounds to 8 to prevent Segmentation Fault! ---
+        if (cycle == 340 && scanline >= -1 && scanline < 240) {
             int safe_sprite_count = std::min((int)sprite_count, 8);
             for (int i = 0; i < safe_sprite_count; i++) {
                 uint8_t sprite_pattern_bits_lo, sprite_pattern_bits_hi;
@@ -272,20 +287,23 @@ void PPU::step() {
                 bool flip_v = spriteScanline[i].attribute & 0x80;
                 bool flip_h = spriteScanline[i].attribute & 0x40;
 
+                int diff = scanline - spriteScanline[i].y;
+                if (diff < 0 || diff > 15) diff = 0; 
+
                 if (!(control & 0x20)) { 
-                    if (!flip_v) sprite_pattern_addr_lo = ((control & 0x08) << 9) | (spriteScanline[i].id << 4) | (scanline - spriteScanline[i].y);
-                    else         sprite_pattern_addr_lo = ((control & 0x08) << 9) | (spriteScanline[i].id << 4) | (7 - (scanline - spriteScanline[i].y));
+                    if (!flip_v) sprite_pattern_addr_lo = ((control & 0x08) << 9) | (spriteScanline[i].id << 4) | diff;
+                    else         sprite_pattern_addr_lo = ((control & 0x08) << 9) | (spriteScanline[i].id << 4) | (7 - diff);
                 } else { 
                     if (!flip_v) {
-                        if (scanline - spriteScanline[i].y < 8)
-                            sprite_pattern_addr_lo = ((spriteScanline[i].id & 0x01) << 12) | ((spriteScanline[i].id & 0xFE) << 4) | ((scanline - spriteScanline[i].y) & 0x07);
+                        if (diff < 8)
+                            sprite_pattern_addr_lo = ((spriteScanline[i].id & 0x01) << 12) | ((spriteScanline[i].id & 0xFE) << 4) | diff;
                         else
-                            sprite_pattern_addr_lo = ((spriteScanline[i].id & 0x01) << 12) | (((spriteScanline[i].id & 0xFE) + 1) << 4) | ((scanline - spriteScanline[i].y) & 0x07);
+                            sprite_pattern_addr_lo = ((spriteScanline[i].id & 0x01) << 12) | (((spriteScanline[i].id & 0xFE) + 1) << 4) | (diff & 0x07);
                     } else {
-                        if (scanline - spriteScanline[i].y < 8)
-                            sprite_pattern_addr_lo = ((spriteScanline[i].id & 0x01) << 12) | (((spriteScanline[i].id & 0xFE) + 1) << 4) | (7 - (scanline - spriteScanline[i].y) & 0x07);
+                        if (diff < 8)
+                            sprite_pattern_addr_lo = ((spriteScanline[i].id & 0x01) << 12) | (((spriteScanline[i].id & 0xFE) + 1) << 4) | (7 - diff);
                         else
-                            sprite_pattern_addr_lo = ((spriteScanline[i].id & 0x01) << 12) | ((spriteScanline[i].id & 0xFE) << 4) | (7 - (scanline - spriteScanline[i].y) & 0x07);
+                            sprite_pattern_addr_lo = ((spriteScanline[i].id & 0x01) << 12) | ((spriteScanline[i].id & 0xFE) << 4) | (7 - (diff & 0x07));
                     }
                 }
 
@@ -337,7 +355,7 @@ void PPU::step() {
 
         if (show_sp) {
             spriteZeroBeingRendered = false;
-            int safe_sprite_count = std::min((int)sprite_count, 8); // --- FIX: Cap array bounds ---
+            int safe_sprite_count = std::min((int)sprite_count, 8); 
             for (int i = 0; i < safe_sprite_count; i++) {
                 if (spriteScanline[i].x == 0) {
                     uint8_t p0 = (sprite_shifter_pattern_lo[i] & 0x80) > 0;
@@ -363,6 +381,7 @@ void PPU::step() {
             if (fg_priority) { pixel = fg_pixel; palette = fg_palette; }
             else             { pixel = bg_pixel; palette = bg_palette; }
 
+            // --- Sprite 0 logic ---
             if (show_bg && show_sp && spriteZeroBeingRendered && cycle != 256) {
                 status |= 0x40;
             }
@@ -380,7 +399,7 @@ void PPU::step() {
         screen[scanline * 256 + (cycle - 1)] = palScreen[color_index];
 
         if (rendering_enabled) {
-            int safe_sprite_count = std::min((int)sprite_count, 8); // --- FIX: Cap array bounds ---
+            int safe_sprite_count = std::min((int)sprite_count, 8); 
             for (int i = 0; i < safe_sprite_count; i++) {
                 if (spriteScanline[i].x > 0) spriteScanline[i].x--;
                 else {
