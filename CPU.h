@@ -26,7 +26,7 @@ public:
     uint8_t open_bus = 0x00;
     
     int cycles;
-    uint32_t total_cycles = 0; // --- FIX: Absolute Hardware Cycle Tracker for DMA Alignment ---
+    uint32_t total_cycles = 0; 
 
 enum Flags {
         C = (1 << 0), Z = (1 << 1), I = (1 << 2), D = (1 << 3),
