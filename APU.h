@@ -25,7 +25,12 @@ struct NoiseChannel {
 
 struct DMCChannel {
     bool enable = false;
-    uint8_t length_counter = 0;
+    uint16_t length_counter = 0;
+    uint16_t reload_length = 1;
+    uint16_t timer = 0;
+    uint16_t timer_reload = 428;
+    uint8_t bit_counter = 0;
+    bool loop = false;
 };
 
 class APU {
@@ -41,8 +46,6 @@ public:
     void reset();
 
     bool irq_active = false;
-    
-    // --- FIX: Expose DMC IRQ Flags for CPU ---
     bool dmc_irq = false; 
     bool dmc_irq_enable = false;
 
@@ -62,9 +65,6 @@ private:
     uint32_t frame_counter = 0;
     uint8_t frame_mode = 0;
     bool irq_inhibit = false;
-    
-    int frame_counter_reset_delay = 0;
-    uint8_t delayed_frame_mode = 0;
     
     void clock_envelopes();
     void clock_lengths();
