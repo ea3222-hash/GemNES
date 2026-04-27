@@ -55,20 +55,13 @@ uint8_t Bus::cpuRead(uint16_t addr, uint8_t current_open_bus) {
     else if (addr == 0x4016 || addr == 0x4017) {
         uint8_t index = addr & 0x0001;
         if (strobe & 1) {
-            controller_state[0] = controller[0];
-            controller_state[1] = controller[1];
-        }
-        
-        data = (controller_state[index] & 0x80) > 0;
-        data |= (current_open_bus & 0xE0); 
-        
-        // --- FIX: Controller Strobing Fail 4 ---
-        // If Strobe is HIGH (1), the shift register is locked in parallel load mode!
-        // It physically cannot shift to the next button.
-        if (!(strobe & 1)) { 
+            data = (controller[index] & 0x80) > 0;
+        } else {
+            data = (controller_state[index] & 0x80) > 0;
             controller_state[index] <<= 1;
             controller_state[index] |= 1; 
         }
+        data |= (current_open_bus & 0xE0); 
     }
     else if (addr >= 0x4000 && addr <= 0x5FFF) {
         return current_open_bus;
@@ -87,6 +80,7 @@ void Bus::cpuWrite(uint16_t addr, uint8_t data) {
     else if (addr == 0x4014) {
         uint16_t dma_page = data << 8;
         
+        // --- FIX: The Golden DMA Hardware Implementation ---
         int dummy_cycles = (cpu.total_cycles % 2 == 1) ? 2 : 1;
         for (int i = 0; i < dummy_cycles; i++) {
             uint8_t dummy_data = cpuRead(cpu.PC, cpu.open_bus); 
@@ -114,8 +108,9 @@ void Bus::cpuWrite(uint16_t addr, uint8_t data) {
         apu.cpuWrite(addr, data);
     }
     else if (addr == 0x4016) {
+        uint8_t prev_strobe = strobe;
         strobe = data & 1;
-        if (strobe & 1) {
+        if (prev_strobe == 1 && strobe == 0) {
             controller_state[0] = controller[0];
             controller_state[1] = controller[1];
         }
