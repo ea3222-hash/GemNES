@@ -45,7 +45,7 @@ void PPU::reset(bool fceux_mode) {
     
     scanline = 0; cycle = 0;
     status = 0x00; control = 0x00; mask = 0x00; 
-    ppu_data_buffer = 0x00; ppu_open_bus = 0x00;
+    ppu_data_buffer = 0x00; ppu_data_latch = 0x00;
     v = 0; t = 0; x = 0; w = 0;
     vblank_suppress = false; is_odd_frame = false;
     frame_complete = false; nmi_output = false; nmi = false;
@@ -60,7 +60,8 @@ void PPU::update_nmi() {
 }
 
 uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
-    uint8_t data = ppu_open_bus; 
+    uint8_t data = ppu_data_latch; 
+    
     switch (addr & 0x0007) {
         case 0x0002:
             data = (status & 0xE0) | (ppu_open_bus & 0x1F);
@@ -86,11 +87,14 @@ uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
             ppu_data_buffer = ppuRead(v);
             
             if (v >= 0x3F00) {
-                data = (ppu_data_buffer & 0x3F) | (ppu_open_bus & 0xC0);
+                data = (ppu_data_buffer & 0x3F) | (ppu_data_latch & 0xC0);
                 ppu_data_buffer = ppuRead(v & 0x2FFF); 
             }
             
-            if ((mask & 0x18) && (scanline >= 0 && scanline < 240)) {
+            bool is_rendering = (mask & 0x18) && (scanline >= 0 && scanline < 240);
+            bool is_active_cycle = (cycle >= 1 && cycle <= 256) || (cycle >= 321 && cycle <= 336);
+            
+            if (is_rendering && is_active_cycle) {
                 if ((v & 0x001F) == 31) { v &= ~0x001F; v ^= 0x0400; } else { v++; }
                 if ((v & 0x7000) != 0x7000) { v += 0x1000; }
                 else {
@@ -99,15 +103,19 @@ uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
                     else if (y == 31) { y = 0; } else { y++; }
                     v = (v & ~0x03E0) | (y << 5);
                 }
-            } else { v += (control & 0x04) ? 32 : 1; }
+            } else { 
+                v += (control & 0x04) ? 32 : 1; 
+            }
             break;
     }
-    ppu_open_bus = data; 
+    
+    ppu_data_latch = data; 
     return data;
 }
 
 void PPU::cpuWrite(uint16_t addr, uint8_t data) {
-    ppu_open_bus = data; 
+    ppu_data_latch = data; 
+
     switch (addr & 0x0007) {
         case 0x0000: control = data; t = (t & 0xF3FF) | ((data & 0x03) << 10); update_nmi(); break;
         case 0x0001: mask = data; break;
@@ -125,7 +133,11 @@ void PPU::cpuWrite(uint16_t addr, uint8_t data) {
             break;
         case 0x0007:
             ppuWrite(v, data);
-            if ((mask & 0x18) && (scanline >= 0 && scanline < 240)) {
+            
+            bool is_rendering = (mask & 0x18) && (scanline >= 0 && scanline < 240);
+            bool is_active_cycle = (cycle >= 1 && cycle <= 256) || (cycle >= 321 && cycle <= 336);
+            
+            if (is_rendering && is_active_cycle) {
                 if ((v & 0x001F) == 31) { v &= ~0x001F; v ^= 0x0400; } else { v++; }
                 if ((v & 0x7000) != 0x7000) { v += 0x1000; }
                 else {
@@ -134,7 +146,9 @@ void PPU::cpuWrite(uint16_t addr, uint8_t data) {
                     else if (y == 31) { y = 0; } else { y++; }
                     v = (v & ~0x03E0) | (y << 5);
                 }
-            } else { v += (control & 0x04) ? 32 : 1; }
+            } else { 
+                v += (control & 0x04) ? 32 : 1; 
+            }
             break;
     }
 }
@@ -200,6 +214,7 @@ void PPU::ppuWrite(uint16_t addr, uint8_t data) {
         else if (addr == 0x14) addr = 0x04;
         else if (addr == 0x18) addr = 0x08;
         else if (addr == 0x1C) addr = 0x0C;
+        
         paletteTable[addr] = data & 0x3F; 
     }
 }
@@ -253,17 +268,24 @@ void PPU::step() {
             if (scanline == -1 && cycle >= 280 && cycle < 305) v = (v & ~0x7BE0) | (t & 0x7BE0); 
         }
 
-        // --- FIX: Restored the exact logic that passed Suddenly Resize Sprite and Sprite Overflow ---
         if (cycle == 257 && scanline >= -1 && scanline < 240) {
+            if (rendering_enabled) {
+                // --- FIX: The OAM Copy Glitch ---
+                if (oam_addr >= 8) {
+                    uint8_t row = oam_addr & 0xF8;
+                    for (int i = 0; i < 8; i++) OAM[i] = OAM[row + i];
+                }
+                oam_addr = 0;
+            }
+
             memset(spriteScanline, 0xFF, sizeof(spriteScanline));
             sprite_count = 0;
-            
             int spriteSize = (control & 0x20) ? 16 : 8; 
+            int eval_y = (scanline == -1) ? 255 : scanline;
 
             int OAMEntry = 0;
             while (OAMEntry < 64 && sprite_count < 9) {
-                // By using raw int math, scanline -1 is evaluated safely!
-                int diff = scanline - OAM[OAMEntry * 4];
+                int diff = eval_y - OAM[OAMEntry * 4];
                 if (diff >= 0 && diff < spriteSize) {
                     if (sprite_count < 8) {
                         spriteScanline[sprite_count].y = OAM[OAMEntry * 4];
@@ -276,18 +298,21 @@ void PPU::step() {
                 }
                 OAMEntry++;
             }
-            if (sprite_count > 8) status |= 0x20; 
+            // --- FIX: Do NOT set overflow flag on Scanline -1 ---
+            if (sprite_count > 8 && scanline >= 0) status |= 0x20; 
         }
 
         if (cycle == 340 && scanline >= -1 && scanline < 240) {
             int safe_sprite_count = std::min((int)sprite_count, 8);
+            int eval_y = (scanline == -1) ? 255 : scanline;
+
             for (int i = 0; i < safe_sprite_count; i++) {
                 uint8_t sprite_pattern_bits_lo, sprite_pattern_bits_hi;
                 uint16_t sprite_pattern_addr_lo, sprite_pattern_addr_hi;
                 bool flip_v = spriteScanline[i].attribute & 0x80;
                 bool flip_h = spriteScanline[i].attribute & 0x40;
 
-                int diff = scanline - spriteScanline[i].y;
+                int diff = eval_y - spriteScanline[i].y;
                 if (diff < 0 || diff > 15) diff = 0; 
 
                 if (!(control & 0x20)) { 
@@ -381,7 +406,6 @@ void PPU::step() {
             if (fg_priority) { pixel = fg_pixel; palette = fg_palette; }
             else             { pixel = bg_pixel; palette = bg_palette; }
 
-            // --- Sprite 0 logic ---
             if (show_bg && show_sp && spriteZeroBeingRendered && cycle != 256) {
                 status |= 0x40;
             }
