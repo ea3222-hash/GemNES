@@ -60,6 +60,8 @@ private:
     void cpuWrite(uint16_t addr, uint8_t data);
     bool page_crossed;
     bool is_write_instr[256];
+    bool prev_nmi_line = false;
+    void poll_nmi(bool is_write);
     void fetch();
 
     void IMP(); void IMM(); void ZP0(); void ZPX(); 
