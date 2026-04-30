@@ -19,14 +19,32 @@ CPU::CPU() {
 CPU::~CPU() {}
 void CPU::ConnectBus(Bus* n) { bus = n; }
 
+void CPU::poll_nmi(bool is_write) {
+    bool current_nmi = bus->ppu.nmi_output;
+    // NMI is Edge-Triggered (High to Low transition)
+    if (!prev_nmi_line && current_nmi) {
+        if (is_write) {
+            nmi_delay = true; // 1-Instruction Delay Pipeline
+        } else {
+            nmi_pending = true; 
+        }
+    }
+    prev_nmi_line = current_nmi;
+}
+
 uint8_t CPU::read(uint16_t addr) { 
     uint8_t data = bus->cpuRead(addr, open_bus);
-    if (addr != 0x4015) { open_bus = data; } 
+    
+    // $4015 is internal! Reading it does NOT update the motherboard open bus!
+    if (addr != 0x4015) { 
+        open_bus = data; 
+    } 
     
     bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
     
-    // Read boundary triggers NMI instantly
-    if (bus->ppu.nmi) { bus->ppu.nmi = false; nmi_pending = true; }
+    // Use the physical edge detector!
+    poll_nmi(false);
+    
     if (bus->cart && bus->cart->irqState()) { irq_pending = true; } else { irq_pending = false; }
     
     cycles++; 
@@ -40,8 +58,9 @@ void CPU::write(uint16_t addr, uint8_t data) {
     bus->cpuWrite(addr, data);
     bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
     
-    // Write boundary delays NMI by 1 instruction
-    if (bus->ppu.nmi) { bus->ppu.nmi = false; nmi_delay = true; }
+    // Use the physical edge detector!
+    poll_nmi(true);
+    
     if (bus->cart && bus->cart->irqState()) { irq_pending = true; } else { irq_pending = false; }
     
     cycles++; 
@@ -316,6 +335,5 @@ int CPU::step() {
 
         default: read(PC); break;
     }
-
     return cycles;
 }
