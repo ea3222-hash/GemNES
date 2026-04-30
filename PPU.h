@@ -18,8 +18,6 @@ public:
 
     uint32_t screen[256 * 240]; 
     bool frame_complete = false; 
-    
-    // --- FIX: Re-added the missing NMI flag! ---
     bool nmi = false; 
     bool nmi_output = false; 
     void update_nmi();                 
@@ -43,8 +41,9 @@ private:
     uint8_t mask = 0x00;
     
     uint8_t ppu_data_buffer = 0x00;
+    uint8_t ppu_data_latch = 0x00; // --- FIX: The Physical PPU Data Latch! ---
     uint8_t ppu_open_bus = 0x00; 
-
+    
     uint16_t v = 0x0000; 
     uint16_t t = 0x0000; 
     uint8_t x = 0x00;    
