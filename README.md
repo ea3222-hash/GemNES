@@ -177,6 +177,7 @@ FAIL 1 : $2007 Stress test
 FAIL 1 : Instruction timing\
 FAIL 3 : Implied dummy reads\
 PASS : Branch dummy reads\
-PASS : JSR EDGE CASES
-### Overall 94/138
+PASS : JSR Edge cases\
+FAIL 1 : Internal data bus
+### Overall 94/139
 
