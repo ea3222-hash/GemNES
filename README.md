@@ -144,8 +144,8 @@ PASS : PPU Register mirroring\
 FAIL 5 : PPU Register open bus\
 PASS : PPU Read buffer\
 FAIL 6 : Palette RAM Quirks\
-FAIL 2 : Rendering Flag behavior\
-FAIL 1 : $2007 Red W/ Rendering
+PASS : Rendering Flag behavior\
+PASS : $2007 Red W/ Rendering
 ### PPU VBLANK TIMING
 PASS : VBlank beginning\
 PASS : VBlank end\
@@ -178,5 +178,5 @@ FAIL 1 : Instruction timing\
 FAIL 3 : Implied dummy reads\
 PASS : Branch dummy reads\
 PASS : JSR EDGE CASES
-### Overall 92/138
+### Overall 94/138
 
