@@ -64,12 +64,14 @@ uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
     
     switch (addr & 0x0007) {
         case 0x0002:
-            data = (status & 0xE0) | (ppu_open_bus & 0x1F);
+            data = (status & 0xE0) | (ppu_data_latch & 0x1F);
+            
             if (scanline == 241) {
                 if (cycle == 0) { vblank_suppress = true; data &= ~0x80; } 
                 else if (cycle == 1) { vblank_suppress = true; data &= ~0x80; } 
                 else if (cycle == 2) { data |= 0x80; }
             }
+            
             status &= ~0x80; 
             w = 0;           
             update_nmi();
@@ -353,7 +355,13 @@ void PPU::step() {
     }
 
     if (scanline == 241 && cycle == 1) {
-        if (!vblank_suppress) { status |= 0x80; update_nmi(); }
+        status |= 0x80; // Set it unconditionally at dot 1!
+        
+        if (vblank_suppress) {
+            status &= ~0x80; // Instantly clear it if CPU read at dot 0 or 1!
+        }
+        
+        update_nmi();
         vblank_suppress = false; 
     }
 
