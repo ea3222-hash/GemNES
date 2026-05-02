@@ -49,14 +49,11 @@ void PPU::reset(bool fceux_mode) {
     v = 0; t = 0; x = 0; w = 0;
     vblank_suppress = false; is_odd_frame = false;
     frame_complete = false; nmi_output = false; nmi = false;
+    nmi_edge_latched = false; nmi_suppressed = false;
 }
 
 void PPU::update_nmi() {
-    bool prev = nmi_output;
     nmi_output = (status & 0x80) && (control & 0x80);
-    if (!prev && nmi_output) {
-        nmi = true;
-    }
 }
 
 uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
@@ -66,10 +63,24 @@ uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
         case 0x0002:
             data = (status & 0xE0) | (ppu_data_latch & 0x1F);
             
+            // --- FIX: VBlank Start Timing ---
             if (scanline == 241) {
-                if (cycle == 0) { vblank_suppress = true; data &= ~0x80; } 
-                else if (cycle == 1) { vblank_suppress = true; data &= ~0x80; } 
-                else if (cycle == 2) { data |= 0x80; }
+                if (cycle == 0) { 
+                    vblank_suppress = true; 
+                    data &= ~0x80; 
+                    nmi_suppressed = true; 
+                } 
+                else if (cycle == 1 || cycle == 2) {
+                    vblank_suppress = true; 
+                    data |= 0x80; 
+                    nmi_suppressed = true; 
+                }
+            }
+            
+            // --- FIX: VBlank End Timing ---
+            // If the CPU reads exactly on the dot the flag clears, it must see 0!
+            if (scanline == -1 && cycle == 1) {
+                data &= ~0x80; 
             }
             
             status &= ~0x80; 
@@ -272,7 +283,6 @@ void PPU::step() {
 
         if (cycle == 257 && scanline >= -1 && scanline < 240) {
             if (rendering_enabled) {
-                // --- FIX: The OAM Copy Glitch ---
                 if (oam_addr >= 8) {
                     uint8_t row = oam_addr & 0xF8;
                     for (int i = 0; i < 8; i++) OAM[i] = OAM[row + i];
@@ -300,7 +310,6 @@ void PPU::step() {
                 }
                 OAMEntry++;
             }
-            // --- FIX: Do NOT set overflow flag on Scanline -1 ---
             if (sprite_count > 8 && scanline >= 0) status |= 0x20; 
         }
 
@@ -355,10 +364,10 @@ void PPU::step() {
     }
 
     if (scanline == 241 && cycle == 1) {
-        status |= 0x80; // Set it unconditionally at dot 1!
+        status |= 0x80; 
         
         if (vblank_suppress) {
-            status &= ~0x80; // Instantly clear it if CPU read at dot 0 or 1!
+            status &= ~0x80; 
         }
         
         update_nmi();
