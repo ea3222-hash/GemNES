@@ -19,52 +19,56 @@ CPU::CPU() {
 CPU::~CPU() {}
 void CPU::ConnectBus(Bus* n) { bus = n; }
 
-void CPU::poll_nmi(bool is_write) {
+void CPU::poll_nmi() {
+    if (bus->ppu.nmi_suppressed) {
+        nmi_pending = false;
+        nmi_delay = false;
+        nmi_edge_cycle = -1;
+        bus->ppu.nmi_suppressed = false;
+    }
+
     bool current_nmi = bus->ppu.nmi_output;
-    // NMI is Edge-Triggered (High to Low transition)
+    // --- EXACT HARDWARE EDGE DETECTOR ---
     if (!prev_nmi_line && current_nmi) {
-        if (is_write) {
-            nmi_delay = true; // 1-Instruction Delay Pipeline
-        } else {
-            nmi_pending = true; 
-        }
+        nmi_edge_cycle = cycle_count_this_inst;
     }
     prev_nmi_line = current_nmi;
 }
 
 uint8_t CPU::read(uint16_t addr) { 
+    cycle_count_this_inst++;
     uint8_t data = bus->cpuRead(addr, open_bus);
-    
-    // $4015 is internal! Reading it does NOT update the motherboard open bus!
-    if (addr != 0x4015) { 
-        open_bus = data; 
-    } 
+    if (addr != 0x4015) open_bus = data; 
     
     bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
+    poll_nmi();
+    irq_pending = (bus->cart && bus->cart->irqState());
     
-    // Use the physical edge detector!
-    poll_nmi(false);
-    
-    if (bus->cart && bus->cart->irqState()) { irq_pending = true; } else { irq_pending = false; }
-    
-    cycles++; 
-    total_cycles++; 
-    return data; 
+    cycles++; total_cycles++; return data; 
 }
 
 void CPU::write(uint16_t addr, uint8_t data) { 
+    cycle_count_this_inst++;
     open_bus = data;
-    
     bus->cpuWrite(addr, data);
+    
     bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
+    poll_nmi();
+    irq_pending = (bus->cart && bus->cart->irqState());
     
-    // Use the physical edge detector!
-    poll_nmi(true);
+    cycles++; total_cycles++; 
+}
+
+void CPU::dummy_write(uint16_t addr, uint8_t data) { 
+    cycle_count_this_inst++;
+    open_bus = data;
+    bus->cpuWrite(addr, data);
     
-    if (bus->cart && bus->cart->irqState()) { irq_pending = true; } else { irq_pending = false; }
+    bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
+    poll_nmi();
+    irq_pending = (bus->cart && bus->cart->irqState());
     
-    cycles++; 
-    total_cycles++; 
+    cycles++; total_cycles++; 
 }
 
 void CPU::setFlag(Flags flag, bool value) { if (value) P |= flag; else P &= ~flag; }
@@ -82,7 +86,7 @@ void CPU::reset() {
     P = 0x24; 
     addr_dummy = 0; fetched = 0; cycles = 0; total_cycles = 0;
     open_bus = 0; base_hi = 0;
-    nmi_pending = false; nmi_delay = false; irq_pending = false;
+    nmi_pending = false; nmi_delay = false; irq_pending = false; prev_nmi_line = false;
 }
 
 void CPU::nmi() {
@@ -162,12 +166,12 @@ void CPU::PHA() { read(PC); push(A); }
 void CPU::PLA() { read(PC); read(0x0100 + SP); A = pop(); updateZeroAndNegativeFlags(A); }
 void CPU::JSR() { uint16_t lo = read(PC++); read(0x0100 + SP); push((PC >> 8) & 0x00FF); push(PC & 0x00FF); uint16_t hi = read(PC++); PC = (hi << 8) | lo; }
 
-void CPU::ASL() { fetch(); write(addr_abs, fetched); uint16_t temp = (uint16_t)fetched << 1; setFlag(C, (temp & 0xFF00) > 0); updateZeroAndNegativeFlags(temp & 0x00FF); write(addr_abs, temp & 0x00FF); }
-void CPU::LSR() { fetch(); write(addr_abs, fetched); setFlag(C, fetched & 0x0001); uint16_t temp = fetched >> 1; updateZeroAndNegativeFlags(temp & 0x00FF); write(addr_abs, temp & 0x00FF); }
-void CPU::ROL() { fetch(); write(addr_abs, fetched); uint16_t temp = (uint16_t)(fetched << 1) | getFlag(C); setFlag(C, temp & 0xFF00); updateZeroAndNegativeFlags(temp & 0x00FF); write(addr_abs, temp & 0x00FF); }
-void CPU::ROR() { fetch(); write(addr_abs, fetched); uint16_t temp = (uint16_t)(getFlag(C) << 7) | (fetched >> 1); setFlag(C, fetched & 0x01); updateZeroAndNegativeFlags(temp & 0x00FF); write(addr_abs, temp & 0x00FF); }
-void CPU::DEC() { fetch(); write(addr_abs, fetched); uint16_t temp = fetched - 1; write(addr_abs, temp & 0x00FF); updateZeroAndNegativeFlags(temp & 0x00FF); }
-void CPU::INC() { fetch(); write(addr_abs, fetched); uint16_t temp = fetched + 1; write(addr_abs, temp & 0x00FF); updateZeroAndNegativeFlags(temp & 0x00FF); }
+void CPU::ASL() { fetch(); dummy_write(addr_abs, fetched); uint16_t temp = (uint16_t)fetched << 1; setFlag(C, (temp & 0xFF00) > 0); updateZeroAndNegativeFlags(temp & 0x00FF); write(addr_abs, temp & 0x00FF); }
+void CPU::LSR() { fetch(); dummy_write(addr_abs, fetched); setFlag(C, fetched & 0x0001); uint16_t temp = fetched >> 1; updateZeroAndNegativeFlags(temp & 0x00FF); write(addr_abs, temp & 0x00FF); }
+void CPU::ROL() { fetch(); dummy_write(addr_abs, fetched); uint16_t temp = (uint16_t)(fetched << 1) | getFlag(C); setFlag(C, temp & 0xFF00); updateZeroAndNegativeFlags(temp & 0x00FF); write(addr_abs, temp & 0x00FF); }
+void CPU::ROR() { fetch(); dummy_write(addr_abs, fetched); uint16_t temp = (uint16_t)(getFlag(C) << 7) | (fetched >> 1); setFlag(C, fetched & 0x01); updateZeroAndNegativeFlags(temp & 0x00FF); write(addr_abs, temp & 0x00FF); }
+void CPU::DEC() { fetch(); dummy_write(addr_abs, fetched); uint16_t temp = fetched - 1; write(addr_abs, temp & 0x00FF); updateZeroAndNegativeFlags(temp & 0x00FF); }
+void CPU::INC() { fetch(); dummy_write(addr_abs, fetched); uint16_t temp = fetched + 1; write(addr_abs, temp & 0x00FF); updateZeroAndNegativeFlags(temp & 0x00FF); }
 
 void CPU::BCC() { if (!getFlag(C)) { read(PC); addr_abs = PC + addr_rel; if ((addr_abs & 0xFF00) != (PC & 0xFF00)) read((PC & 0xFF00) | (addr_abs & 0x00FF)); PC = addr_abs; } }
 void CPU::BCS() { if (getFlag(C))  { read(PC); addr_abs = PC + addr_rel; if ((addr_abs & 0xFF00) != (PC & 0xFF00)) read((PC & 0xFF00) | (addr_abs & 0x00FF)); PC = addr_abs; } }
@@ -209,12 +213,12 @@ void CPU::ROR_A() { read(PC); uint16_t temp = (uint16_t)(getFlag(C) << 7) | (A >
 
 void CPU::LAX() { fetch(); A = fetched; X = fetched; updateZeroAndNegativeFlags(A); }
 void CPU::SAX() { write(addr_abs, A & X); }
-void CPU::DCP() { fetch(); write(addr_abs, fetched); uint16_t t = (fetched - 1) & 0x00FF; write(addr_abs, t); setFlag(C, A >= t); updateZeroAndNegativeFlags((A - t) & 0x00FF); }
-void CPU::ISC() { fetch(); write(addr_abs, fetched); uint16_t t = (fetched + 1) & 0x00FF; write(addr_abs, t); uint16_t val = t ^ 0x00FF; uint16_t temp = (uint16_t)A + val + (uint16_t)getFlag(C); setFlag(C, temp > 255); setFlag(V, (temp ^ (uint16_t)A) & (temp ^ val) & 0x0080); A = temp & 0x00FF; updateZeroAndNegativeFlags(A); }
-void CPU::SLO() { fetch(); write(addr_abs, fetched); uint16_t t = (uint16_t)fetched << 1; setFlag(C, (t & 0xFF00) > 0); write(addr_abs, t & 0x00FF); A |= (t & 0x00FF); updateZeroAndNegativeFlags(A); }
-void CPU::RLA() { fetch(); write(addr_abs, fetched); uint16_t t = (uint16_t)(fetched << 1) | getFlag(C); setFlag(C, t & 0xFF00); write(addr_abs, t & 0x00FF); A &= (t & 0x00FF); updateZeroAndNegativeFlags(A); }
-void CPU::SRE() { fetch(); write(addr_abs, fetched); setFlag(C, fetched & 0x0001); uint16_t t = fetched >> 1; write(addr_abs, t & 0x00FF); A ^= (t & 0x00FF); updateZeroAndNegativeFlags(A); }
-void CPU::RRA() { fetch(); write(addr_abs, fetched); uint16_t t = (uint16_t)(getFlag(C) << 7) | (fetched >> 1); setFlag(C, fetched & 0x0001); write(addr_abs, t & 0x00FF); uint16_t temp = (uint16_t)A + t + (uint16_t)getFlag(C); setFlag(C, temp > 255); setFlag(V, (~((uint16_t)A ^ t) & ((uint16_t)A ^ temp)) & 0x0080); A = temp & 0x00FF; updateZeroAndNegativeFlags(A); }
+void CPU::DCP() { fetch(); dummy_write(addr_abs, fetched); uint16_t t = (fetched - 1) & 0x00FF; write(addr_abs, t); setFlag(C, A >= t); updateZeroAndNegativeFlags((A - t) & 0x00FF); }
+void CPU::ISC() { fetch(); dummy_write(addr_abs, fetched); uint16_t t = (fetched + 1) & 0x00FF; write(addr_abs, t); uint16_t val = t ^ 0x00FF; uint16_t temp = (uint16_t)A + val + (uint16_t)getFlag(C); setFlag(C, temp > 255); setFlag(V, (temp ^ (uint16_t)A) & (temp ^ val) & 0x0080); A = temp & 0x00FF; updateZeroAndNegativeFlags(A); }
+void CPU::SLO() { fetch(); dummy_write(addr_abs, fetched); uint16_t t = (uint16_t)fetched << 1; setFlag(C, (t & 0xFF00) > 0); write(addr_abs, t & 0x00FF); A |= (t & 0x00FF); updateZeroAndNegativeFlags(A); }
+void CPU::RLA() { fetch(); dummy_write(addr_abs, fetched); uint16_t t = (uint16_t)(fetched << 1) | getFlag(C); setFlag(C, t & 0xFF00); write(addr_abs, t & 0x00FF); A &= (t & 0x00FF); updateZeroAndNegativeFlags(A); }
+void CPU::SRE() { fetch(); dummy_write(addr_abs, fetched); setFlag(C, fetched & 0x0001); uint16_t t = fetched >> 1; write(addr_abs, t & 0x00FF); A ^= (t & 0x00FF); updateZeroAndNegativeFlags(A); }
+void CPU::RRA() { fetch(); dummy_write(addr_abs, fetched); uint16_t t = (uint16_t)(getFlag(C) << 7) | (fetched >> 1); setFlag(C, fetched & 0x0001); write(addr_abs, t & 0x00FF); uint16_t temp = (uint16_t)A + t + (uint16_t)getFlag(C); setFlag(C, temp > 255); setFlag(V, (~((uint16_t)A ^ t) & ((uint16_t)A ^ temp)) & 0x0080); A = temp & 0x00FF; updateZeroAndNegativeFlags(A); }
 void CPU::ANC() { fetch(); A &= fetched; updateZeroAndNegativeFlags(A); setFlag(C, getFlag(N)); }
 void CPU::ALR() { fetch(); A &= fetched; setFlag(C, A & 0x01); A >>= 1; updateZeroAndNegativeFlags(A); }
 void CPU::ARR() { fetch(); A &= fetched; uint16_t t = (A >> 1) | (getFlag(C) << 7); setFlag(C, t & 0x40); setFlag(V, ((t >> 6) ^ (t >> 5)) & 0x01); A = t & 0xFF; updateZeroAndNegativeFlags(A); }
@@ -248,12 +252,27 @@ void CPU::ANE() { fetch(); A = (A | 0xEE) & X & fetched; updateZeroAndNegativeFl
 void CPU::LXA() { fetch(); A = (A | 0xEE) & fetched; X = A; updateZeroAndNegativeFlags(A); }
 
 int CPU::step() {
-    if (nmi_pending) { nmi_pending = false; nmi(); return cycles; }
-    if (nmi_delay) { nmi_delay = false; nmi_pending = true; } 
+    if (nmi_pending) { 
+        nmi_pending = false; 
+        nmi(); 
+        return cycles; 
+    }
     
-    if ((irq_pending || bus->apu.irq_active || bus->apu.dmc_irq) && !getFlag(I)) { irq(); return cycles; }
+    // The delay pipeline automatically shifting over
+    if (nmi_delay) { 
+        nmi_delay = false; 
+        nmi_pending = true; 
+    } 
+    
+    if ((irq_pending || bus->apu.irq_active || bus->apu.dmc_irq) && !getFlag(I)) { 
+        irq(); 
+        return cycles; 
+    }
     
     cycles = 0;
+    cycle_count_this_inst = 0;
+    nmi_edge_cycle = -1;
+    
     current_opcode = read(PC++); 
     uint8_t opcode = current_opcode; 
     addr_dummy = 0; 
@@ -335,5 +354,18 @@ int CPU::step() {
 
         default: read(PC); break;
     }
+    
+    // --- EXACT HARDWARE TIMING SOLVER ---
+    // The CPU polls for interrupts on the *second to last cycle* of an instruction.
+    // If an NMI pulse occurs on the very last cycle, it completely misses the poll 
+    // and is forced to wait an entire extra instruction!
+    if (nmi_edge_cycle != -1) {
+        if (nmi_edge_cycle < cycle_count_this_inst) {
+            nmi_pending = true;
+        } else {
+            nmi_delay = true;
+        }
+    }
+    
     return cycles;
 }
