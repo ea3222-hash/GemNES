@@ -3,6 +3,8 @@ is a NES emulator but developed by AI (Gemini Pro 3.1)
   the emulator is partially cycle-accurate and buggy
 # Compile
 to compile you need G++ and run this command "g++ APU.cpp Bus.cpp Cartridge.cpp CPU.cpp PPU.cpp main.cpp -std=c++17 -O2 -o GemNES.exe -lcomdlg32 -lwinmm -lgdi32 -luser32"
+<img width="511" height="480" alt="image" src="https://github.com/user-attachments/assets/8bd8fd41-9fad-4bef-9de0-8a76b9b445fa" />
+
 # AccuracyCoin TEST
 ### CPU BEHAVIOR
 PASS : Rom is not writable\
@@ -150,10 +152,10 @@ PASS : $2007 Red W/ Rendering
 PASS : VBlank beginning\
 PASS : VBlank end\
 PASS : NMI control\
-FAIL 1 : NMI timing\
-FAIL 1 : NMI Suppression\
+PASS : NMI timing\
+PASS : NMI Suppression\
 FAIL 1 : NMI At VBlank end\
-FAIL 1 : NMI Disabled at VBlank
+PASS : NMI Disabled at VBlank
 ### SPRITE EVALUATION
 PASS : Sprite overflow behavior\
 PASS : Sprite 0 hit behavior\
@@ -161,8 +163,8 @@ FAIL 1 : $2002 Flag timing\
 PASS : Suddenly resize sprite\
 FAIL 2 : Arbitrary sprite zero\
 FAIL 1 : Misaligned OAM behavior\
-FAIL 1 : Address $2004 behavior\
-FAIL 1 : OAM Corruption\
+FAIL 4 : Address $2004 behavior\
+FAIL 2 : OAM Corruption\
 FAIL 1 : INC $4014
 ### PPU MISC.
 PASS : Attributes as tiles\
@@ -179,5 +181,5 @@ FAIL 3 : Implied dummy reads\
 PASS : Branch dummy reads\
 PASS : JSR Edge cases\
 FAIL 1 : Internal data bus
-### Overall 94/139
+### Overall 98/139
 
