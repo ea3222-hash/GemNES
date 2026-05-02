@@ -3,9 +3,9 @@ is a NES emulator but developed by AI (Gemini Pro 3.1)
   the emulator is partially cycle-accurate and buggy
 # Compile
 to compile you need G++ and run this command "g++ APU.cpp Bus.cpp Cartridge.cpp CPU.cpp PPU.cpp main.cpp -std=c++17 -O2 -o GemNES.exe -lcomdlg32 -lwinmm -lgdi32 -luser32"
-<img width="511" height="480" alt="image" src="https://github.com/user-attachments/assets/8bd8fd41-9fad-4bef-9de0-8a76b9b445fa" />
-
 # AccuracyCoin TEST
+<img width="511" height="480" alt="image" src="https://github.com/user-attachments/assets/938d5aa4-895c-45e9-b553-d8bc45d7fae4" />
+
 ### CPU BEHAVIOR
 PASS : Rom is not writable\
 PASS : RAM Mirroring\
