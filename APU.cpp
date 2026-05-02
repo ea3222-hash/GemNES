@@ -21,6 +21,7 @@ const uint16_t noise_timer_table[16] = {
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
 };
 
+// --- FIX: Official NTSC DMC Clock Rates ---
 const uint16_t dmc_rate_table[16] = {
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54
 };
@@ -41,6 +42,8 @@ void APU::reset() {
     irq_active = false;
     dmc_irq = false;
     dmc_irq_enable = false;
+    frame_counter_reset_delay = 0;
+    delayed_frame_mode = 0;
 }
 
 void APU::cpuWrite(uint16_t addr, uint8_t data) {
@@ -92,18 +95,17 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
             break;
             
         case 0x4017:
-            frame_mode = (data & 0x80) >> 7;
+            delayed_frame_mode = (data & 0x80) >> 7;
             irq_inhibit = (data & 0x40) >> 6;
             
-            // --- FIX: Unconditionally clear the active IRQ flag ---
-            irq_active = false; 
-            
-            // --- FIX: Instant Frame Reset restores 4-Step and 5-Step timing ---
-            frame_counter = 0;
-            if (frame_mode == 1) { 
-                clock_lengths();
-                clock_envelopes();
+            if (irq_inhibit) {
+                irq_active = false; 
             }
+            
+            // --- FIX: Restore the 3/4 Cycle Hardware Delay! ---
+            // A write to $4017 evaluates over the next few CPU cycles. 
+            // It waits 3 cycles on an odd CPU cycle, and 4 on an even CPU cycle.
+            frame_counter_reset_delay = (clock_counter % 2 == 0) ? 4 : 3;
             break;
     }
 }
@@ -117,10 +119,11 @@ uint8_t APU::cpuRead(uint16_t addr, uint8_t open_bus) {
         if (triangle.length_counter > 0) data |= 0x04;
         if (noise.length_counter > 0) data |= 0x08;
         if (dmc.length_counter > 0) data |= 0x10;
-        if (irq_active) data |= 0x40; 
-        if (dmc_irq) data |= 0x80; 
         
-        irq_active = false; 
+        if (irq_active) data |= 0x40; 
+        if (dmc_irq) data |= 0x80; // Inject DMC IRQ bit!
+        
+        irq_active = false; // Reading $4015 clears the Frame IRQ (but NOT the DMC IRQ!)
     }
     return data;
 }
@@ -152,6 +155,19 @@ void APU::clock_lengths() {
 }
 
 void APU::step() {
+    // --- FIX: Execute the physical APU Frame Reset Delay ---
+    if (frame_counter_reset_delay > 0) {
+        frame_counter_reset_delay--;
+        if (frame_counter_reset_delay == 0) {
+            frame_counter = 0;
+            frame_mode = delayed_frame_mode;
+            if (frame_mode == 1) { 
+                clock_lengths();
+                clock_envelopes();
+            }
+        }
+    }
+
     if (triangle.timer > 0) triangle.timer--;
     else {
         triangle.timer = triangle.timer_reload;
@@ -172,11 +188,12 @@ void APU::step() {
         }
     }
 
-    if (dmc.length_counter > 0) {
-        if (dmc.timer > 0) {
-            dmc.timer--;
-        } else {
-            dmc.timer = dmc.timer_reload;
+    // --- FIX: The Physical Low-Overhead DMC Hardware Timer ---
+    if (dmc.timer > 0) {
+        dmc.timer--;
+    } else {
+        dmc.timer = dmc.timer_reload;
+        if (dmc.length_counter > 0) {
             dmc.bit_counter++;
             if (dmc.bit_counter >= 8) {
                 dmc.bit_counter = 0;
@@ -185,7 +202,7 @@ void APU::step() {
                     if (dmc.loop) {
                         dmc.length_counter = dmc.reload_length;
                     } else if (dmc_irq_enable) {
-                        dmc_irq = true;
+                        dmc_irq = true; // Fires the IRQ flawlessly!
                     }
                 }
             }
