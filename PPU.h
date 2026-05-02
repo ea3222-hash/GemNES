@@ -20,6 +20,9 @@ public:
     bool frame_complete = false; 
     bool nmi = false; 
     bool nmi_output = false; 
+    
+    bool nmi_edge_latched = false;
+    bool nmi_suppressed = false; 
     void update_nmi();                 
 
     uint8_t OAM[256];
@@ -41,9 +44,8 @@ private:
     uint8_t mask = 0x00;
     
     uint8_t ppu_data_buffer = 0x00;
-    uint8_t ppu_data_latch = 0x00; // --- FIX: The Physical PPU Data Latch! ---
-    uint8_t ppu_open_bus = 0x00; 
-    
+    uint8_t ppu_data_latch = 0x00;
+
     uint16_t v = 0x0000; 
     uint16_t t = 0x0000; 
     uint8_t x = 0x00;    
