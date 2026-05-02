@@ -43,6 +43,7 @@ private:
 
     uint8_t read(uint16_t addr);
     void write(uint16_t addr, uint8_t data);
+    void dummy_write(uint16_t addr, uint8_t data); 
 
     void push(uint8_t data);
     uint8_t pop();
@@ -60,8 +61,12 @@ private:
     void cpuWrite(uint16_t addr, uint8_t data);
     bool page_crossed;
     bool is_write_instr[256];
+    
+    // --- EXACT HARDWARE POLLING ---
+    int cycle_count_this_inst = 0;
+    int nmi_edge_cycle = -1;
     bool prev_nmi_line = false;
-    void poll_nmi(bool is_write);
+    void poll_nmi();
     void fetch();
 
     void IMP(); void IMM(); void ZP0(); void ZPX(); 
