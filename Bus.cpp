@@ -49,8 +49,7 @@ uint8_t Bus::cpuRead(uint16_t addr, uint8_t current_open_bus) {
         data = ppu.cpuRead(addr & 0x2007, current_open_bus); 
     }
     else if (addr == 0x4015) { 
-        data = apu.cpuRead(addr, current_open_bus); 
-        return data; 
+        return apu.cpuRead(addr, current_open_bus); 
     }
     else if (addr == 0x4016 || addr == 0x4017) {
         uint8_t index = addr & 0x0001;
@@ -67,12 +66,11 @@ uint8_t Bus::cpuRead(uint16_t addr, uint8_t current_open_bus) {
         return current_open_bus;
     }
 
-    cpu.open_bus = data; 
     return data;
 }
 
 void Bus::cpuWrite(uint16_t addr, uint8_t data) {
-    cpu.open_bus = data; 
+    cpu.open_bus = data; // ANY write instantly updates the motherboard open bus!
 
     if (cart && cart->cpuWrite(addr, data)) { } 
     else if (addr >= 0x0000 && addr <= 0x1FFF) { cpuRam[addr & 0x07FF] = data; } 
@@ -80,7 +78,7 @@ void Bus::cpuWrite(uint16_t addr, uint8_t data) {
     else if (addr == 0x4014) {
         uint16_t dma_page = data << 8;
         
-        // --- FIX: The Golden DMA Hardware Implementation ---
+        // --- THE GOLDEN DMA LOOP ---
         int dummy_cycles = (cpu.total_cycles % 2 == 1) ? 2 : 1;
         for (int i = 0; i < dummy_cycles; i++) {
             uint8_t dummy_data = cpuRead(cpu.PC, cpu.open_bus); 
@@ -92,11 +90,12 @@ void Bus::cpuWrite(uint16_t addr, uint8_t data) {
 
         for (int i = 0; i < 256; i++) {
             uint8_t dma_data = cpuRead(dma_page | i, cpu.open_bus);
+            cpu.open_bus = dma_data;
             if (!cpu.fceux_mode) { ppu.step(); ppu.step(); ppu.step(); apu.step(); } 
             cpu.cycles++; 
             cpu.total_cycles++;
             
-            cpu.open_bus = dma_data;
+            // --- FIX: Write formal OAM data onto the PPU Bus so It correctly catches the latch!
             ppu.cpuWrite(0x2004, dma_data);
             
             if (!cpu.fceux_mode) { ppu.step(); ppu.step(); ppu.step(); apu.step(); } 
@@ -116,6 +115,7 @@ void Bus::cpuWrite(uint16_t addr, uint8_t data) {
         }
     }
 }
+
 void Bus::clearCheats() { cheats.clear(); }
 void Bus::addCheat(const std::string& code) {
     if (code.length() != 6 && code.length() != 8) return;
