@@ -41,6 +41,9 @@ enum Flags {
 private:
     Bus* bus = nullptr;
 
+    bool dma_stole_cycle = false; // NEW
+    void poll_dma(); // NEW
+
     uint8_t read(uint16_t addr);
     void write(uint16_t addr, uint8_t data);
     void dummy_write(uint16_t addr, uint8_t data); 
