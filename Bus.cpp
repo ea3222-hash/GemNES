@@ -23,14 +23,9 @@ void Bus::reset(bool hard, bool fceux_mode) {
     if (cart) cart->reset(); 
     
     if (hard) {
-        if (fceux_mode) {
-            for (int i = 0; i < 2048; i++) {
-                cpuRam[i] = (i & 0x04) ? 0xFF : 0x00;
-            }
-        } else {
-            for (int i = 0; i < 2048; i++) {
-                cpuRam[i] = rand() % 256; 
-            }
+        // --- FIX: Exact NES Hardware Power-On RAM Pattern! ---
+        for (int i = 0; i < 2048; i++) {
+            cpuRam[i] = (i & 0x04) ? 0xFF : 0x00;
         }
     }
     
@@ -52,11 +47,13 @@ uint8_t Bus::cpuRead(uint16_t addr, uint8_t current_open_bus) {
         return apu.cpuRead(addr, current_open_bus); 
     }
     else if (addr == 0x4016 || addr == 0x4017) {
+        // --- FIX: RMW Instructions will not incorrectly advance the shift register ---
         uint8_t index = addr & 0x0001;
-        if (strobe & 1) {
-            data = (controller[index] & 0x80) > 0;
+        data = (controller_state[index] & 0x80) > 0;
+        
+        if (strobe) {
+            controller_state[index] = controller[index];
         } else {
-            data = (controller_state[index] & 0x80) > 0;
             controller_state[index] <<= 1;
             controller_state[index] |= 1; 
         }
@@ -70,7 +67,7 @@ uint8_t Bus::cpuRead(uint16_t addr, uint8_t current_open_bus) {
 }
 
 void Bus::cpuWrite(uint16_t addr, uint8_t data) {
-    cpu.open_bus = data; // ANY write instantly updates the motherboard open bus!
+    cpu.open_bus = data; 
 
     if (cart && cart->cpuWrite(addr, data)) { } 
     else if (addr >= 0x0000 && addr <= 0x1FFF) { cpuRam[addr & 0x07FF] = data; } 
@@ -107,9 +104,9 @@ void Bus::cpuWrite(uint16_t addr, uint8_t data) {
         apu.cpuWrite(addr, data);
     }
     else if (addr == 0x4016) {
-        uint8_t prev_strobe = strobe;
+        // --- FIX: Strobe is treated as a continuous transparent latch ---
         strobe = data & 1;
-        if (prev_strobe == 1 && strobe == 0) {
+        if (strobe) {
             controller_state[0] = controller[0];
             controller_state[1] = controller[1];
         }
