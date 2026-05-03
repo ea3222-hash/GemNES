@@ -23,7 +23,6 @@ struct NoiseChannel {
     bool env_start = false; uint8_t env_vol = 0; uint8_t env_divider = 0;
 };
 
-// --- FIX: Accurate DMC Timer State ---
 struct DMCChannel {
     bool enable = false;
     uint16_t length_counter = 0;
@@ -67,7 +66,6 @@ private:
     uint8_t frame_mode = 0;
     bool irq_inhibit = false;
     
-    // --- FIX: The 3-4 Cycle Hardware Delay ---
     int frame_counter_reset_delay = 0;
     uint8_t delayed_frame_mode = 0;
     
