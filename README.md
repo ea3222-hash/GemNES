@@ -4,7 +4,8 @@ is a NES emulator but developed by AI (Gemini Pro 3.1)
 # Compile
 to compile you need G++ and run this command "g++ APU.cpp Bus.cpp Cartridge.cpp CPU.cpp PPU.cpp main.cpp -std=c++17 -O2 -o GemNES.exe -lcomdlg32 -lwinmm -lgdi32 -luser32"
 # AccuracyCoin TEST
-<img width="511" height="480" alt="image" src="https://github.com/user-attachments/assets/938d5aa4-895c-45e9-b553-d8bc45d7fae4" />
+<img width="512" height="479" alt="image" src="https://github.com/user-attachments/assets/99e20c1b-bcd0-45f2-a3ef-c777e57c8b7d" />
+
 
 ### CPU BEHAVIOR
 PASS : Rom is not writable\
@@ -117,8 +118,8 @@ FAIL 1 : Implicit DMA abort
 PASS : Length counter\
 PASS : Length table\
 FAIL 7 : Frame counter IRQ\
-FAIL 1 : Frame counter 4-step\
-FAIL 1 : Frame counter 5-step\
+PASS : Frame counter 4-step\
+PASS : Frame counter 5-step\
 FAIL I : Delta modulation channel\
 FAIL 1 : APU Register Activation\
 FAIL 4 : Controller strobing\
