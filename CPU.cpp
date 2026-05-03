@@ -28,7 +28,6 @@ void CPU::poll_nmi() {
     }
 
     bool current_nmi = bus->ppu.nmi_output;
-    // --- EXACT HARDWARE EDGE DETECTOR ---
     if (!prev_nmi_line && current_nmi) {
         nmi_edge_cycle = cycle_count_this_inst;
     }
@@ -48,6 +47,7 @@ uint8_t CPU::read(uint16_t addr) {
 }
 
 void CPU::write(uint16_t addr, uint8_t data) { 
+    // WRITES CANNOT BE HALTED BY DMA!
     cycle_count_this_inst++;
     open_bus = data;
     bus->cpuWrite(addr, data);
@@ -60,6 +60,7 @@ void CPU::write(uint16_t addr, uint8_t data) {
 }
 
 void CPU::dummy_write(uint16_t addr, uint8_t data) { 
+    // WRITES CANNOT BE HALTED BY DMA!
     cycle_count_this_inst++;
     open_bus = data;
     bus->cpuWrite(addr, data);
@@ -226,24 +227,24 @@ void CPU::AXS() { fetch(); uint16_t t = (A & X) - fetched; setFlag(C, (A & X) >=
 void CPU::SBC_U() { SBC(); } 
 
 void CPU::SHA() { 
-    uint8_t val = A & X & (base_hi + 1); 
-    uint16_t target = page_crossed ? (((uint16_t)val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
+    uint8_t val = A & X & ((addr_dummy >> 8) + 1); 
+    uint16_t target = page_crossed ? ((val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
     write(target, val); 
 }
 void CPU::SHX() { 
-    uint8_t val = X & (base_hi + 1); 
-    uint16_t target = page_crossed ? (((uint16_t)val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
+    uint8_t val = X & ((addr_dummy >> 8) + 1); 
+    uint16_t target = page_crossed ? ((val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
     write(target, val); 
 }
 void CPU::SHY() { 
-    uint8_t val = Y & (base_hi + 1); 
-    uint16_t target = page_crossed ? (((uint16_t)val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
+    uint8_t val = Y & ((addr_dummy >> 8) + 1); 
+    uint16_t target = page_crossed ? ((val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
     write(target, val); 
 }
 void CPU::SHS() { 
     SP = A & X; 
-    uint8_t val = SP & (base_hi + 1); 
-    uint16_t target = page_crossed ? (((uint16_t)val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
+    uint8_t val = SP & ((addr_dummy >> 8) + 1); 
+    uint16_t target = page_crossed ? ((val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
     write(target, val); 
 }
 
@@ -272,6 +273,8 @@ int CPU::step() {
     cycles = 0;
     cycle_count_this_inst = 0;
     nmi_edge_cycle = -1;
+
+    dma_stole_cycle = false;
     
     current_opcode = read(PC++); 
     uint8_t opcode = current_opcode; 
@@ -355,7 +358,6 @@ int CPU::step() {
         default: read(PC); break;
     }
     
-    // --- EXACT HARDWARE TIMING SOLVER ---
     // The CPU polls for interrupts on the *second to last cycle* of an instruction.
     // If an NMI pulse occurs on the very last cycle, it completely misses the poll 
     // and is forced to wait an entire extra instruction!
