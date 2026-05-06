@@ -39,6 +39,8 @@ private:
     int scanline = 0;
     int cycle = 0;
 
+    int latch_decay_timer = 0; // decay | NEW
+
     uint8_t status = 0x00;
     uint8_t control = 0x00;
     uint8_t mask = 0x00;
