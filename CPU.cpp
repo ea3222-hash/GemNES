@@ -1,373 +1,218 @@
 #include "CPU.h"
-#include "Bus.h"
+#include <iostream>
 
-CPU::CPU() {
-    for (int i = 0; i < 256; i++) is_write_instr[i] = false;
-    uint8_t write_opcodes[] = {
-        0x85, 0x95, 0x8D, 0x9D, 0x99, 0x81, 0x91, 0x86, 0x96, 0x8E, 0x84, 0x94, 0x8C, 
-        0xE6, 0xF6, 0xEE, 0xFE, 0xC6, 0xD6, 0xCE, 0xDE, 0x06, 0x16, 0x0E, 0x1E, 
-        0x46, 0x56, 0x4E, 0x5E, 0x26, 0x36, 0x2E, 0x3E, 0x66, 0x76, 0x6E, 0x7E, 
-        0x87, 0x97, 0x8F, 0x83, 0xC7, 0xD7, 0xCF, 0xDF, 0xDB, 0xC3, 0xD3, 0xE7, 
-        0xF7, 0xEF, 0xFF, 0xFB, 0xE3, 0xF3, 0x07, 0x17, 0x0F, 0x1F, 0x1B, 0x03, 
-        0x13, 0x27, 0x37, 0x2F, 0x3F, 0x3B, 0x23, 0x33, 0x47, 0x57, 0x4F, 0x5F, 
-        0x5B, 0x43, 0x53, 0x67, 0x77, 0x6F, 0x7F, 0x7B, 0x63, 0x73, 
-        0x93, 0x9F, 0x9E, 0x9C, 0x9B
-    };
-    for (uint8_t op : write_opcodes) is_write_instr[op] = true;
+#define OP(op, in, md, cyc) opcodes[0x##op] = {in, md, cyc}
+
+CPU::CPU(Bus* bus) : bus(bus) {
+    initOpcodes();
 }
 
-CPU::~CPU() {}
-void CPU::ConnectBus(Bus* n) { bus = n; }
+void CPU::initOpcodes() {
+    for (int i = 0; i < 256; i++) opcodes[i] = {XXX, IMP, 2}; // Default Unofficial
 
-void CPU::poll_nmi() {
-    if (bus->ppu.nmi_suppressed) {
-        nmi_pending = false;
-        nmi_delay = false;
-        nmi_edge_cycle = -1;
-        bus->ppu.nmi_suppressed = false;
-    }
-
-    bool current_nmi = bus->ppu.nmi_output;
-    if (!prev_nmi_line && current_nmi) {
-        nmi_edge_cycle = cycle_count_this_inst;
-    }
-    prev_nmi_line = current_nmi;
+    OP(69,ADC,IMM,2); OP(65,ADC,ZP,3); OP(75,ADC,ZPX,4); OP(6D,ADC,ABS,4); OP(7D,ADC,ABSX,4); OP(79,ADC,ABSY,4); OP(61,ADC,INDX,6); OP(71,ADC,INDY,5);
+    OP(29,AND,IMM,2); OP(25,AND,ZP,3); OP(35,AND,ZPX,4); OP(2D,AND,ABS,4); OP(3D,AND,ABSX,4); OP(39,AND,ABSY,4); OP(21,AND,INDX,6); OP(31,AND,INDY,5);
+    OP(0A,ASL,ACC,2); OP(06,ASL,ZP,5); OP(16,ASL,ZPX,6); OP(0E,ASL,ABS,6); OP(1E,ASL,ABSX,7);
+    OP(90,BCC,REL,2); OP(B0,BCS,REL,2); OP(F0,BEQ,REL,2); OP(30,BMI,REL,2); OP(D0,BNE,REL,2); OP(10,BPL,REL,2); OP(50,BVC,REL,2); OP(70,BVS,REL,2);
+    OP(24,BIT,ZP,3);  OP(2C,BIT,ABS,4); OP(00,BRK,IMP,7); OP(18,CLC,IMP,2); OP(D8,CLD,IMP,2); OP(58,CLI,IMP,2); OP(B8,CLV,IMP,2);
+    OP(C9,CMP,IMM,2); OP(C5,CMP,ZP,3); OP(D5,CMP,ZPX,4); OP(CD,CMP,ABS,4); OP(DD,CMP,ABSX,4); OP(D9,CMP,ABSY,4); OP(C1,CMP,INDX,6); OP(D1,CMP,INDY,5);
+    OP(E0,CPX,IMM,2); OP(E4,CPX,ZP,3); OP(EC,CPX,ABS,4); OP(C0,CPY,IMM,2); OP(C4,CPY,ZP,3); OP(CC,CPY,ABS,4);
+    OP(C6,DEC,ZP,5);  OP(D6,DEC,ZPX,6); OP(CE,DEC,ABS,6); OP(DE,DEC,ABSX,7); OP(CA,DEX,IMP,2); OP(88,DEY,IMP,2);
+    OP(49,EOR,IMM,2); OP(45,EOR,ZP,3); OP(55,EOR,ZPX,4); OP(4D,EOR,ABS,4); OP(5D,EOR,ABSX,4); OP(59,EOR,ABSY,4); OP(41,EOR,INDX,6); OP(51,EOR,INDY,5);
+    OP(E6,INC,ZP,5);  OP(F6,INC,ZPX,6); OP(EE,INC,ABS,6); OP(FE,INC,ABSX,7); OP(E8,INX,IMP,2); OP(C8,INY,IMP,2);
+    OP(4C,JMP,ABS,3); OP(6C,JMP,IND,5); OP(20,JSR,ABS,6);
+    OP(A9,LDA,IMM,2); OP(A5,LDA,ZP,3); OP(B5,LDA,ZPX,4); OP(AD,LDA,ABS,4); OP(BD,LDA,ABSX,4); OP(B9,LDA,ABSY,4); OP(A1,LDA,INDX,6); OP(B1,LDA,INDY,5);
+    OP(A2,LDX,IMM,2); OP(A6,LDX,ZP,3); OP(B6,LDX,ZPY,4); OP(AE,LDX,ABS,4); OP(BE,LDX,ABSY,4);
+    OP(A0,LDY,IMM,2); OP(A4,LDY,ZP,3); OP(B4,LDY,ZPX,4); OP(AC,LDY,ABS,4); OP(BC,LDY,ABSX,4);
+    OP(4A,LSR,ACC,2); OP(46,LSR,ZP,5); OP(56,LSR,ZPX,6); OP(4E,LSR,ABS,6); OP(5E,LSR,ABSX,7); OP(EA,NOP,IMP,2);
+    OP(09,ORA,IMM,2); OP(05,ORA,ZP,3); OP(15,ORA,ZPX,4); OP(0D,ORA,ABS,4); OP(1D,ORA,ABSX,4); OP(19,ORA,ABSY,4); OP(01,ORA,INDX,6); OP(11,ORA,INDY,5);
+    OP(48,PHA,IMP,3); OP(08,PHP,IMP,3); OP(68,PLA,IMP,4); OP(28,PLP,IMP,4);
+    OP(2A,ROL,ACC,2); OP(26,ROL,ZP,5); OP(36,ROL,ZPX,6); OP(2E,ROL,ABS,6); OP(3E,ROL,ABSX,7);
+    OP(6A,ROR,ACC,2); OP(66,ROR,ZP,5); OP(76,ROR,ZPX,6); OP(6E,ROR,ABS,6); OP(7E,ROR,ABSX,7);
+    OP(40,RTI,IMP,6); OP(60,RTS,IMP,6);
+    OP(E9,SBC,IMM,2); OP(E5,SBC,ZP,3); OP(F5,SBC,ZPX,4); OP(ED,SBC,ABS,4); OP(FD,SBC,ABSX,4); OP(F9,SBC,ABSY,4); OP(E1,SBC,INDX,6); OP(F1,SBC,INDY,5);
+    OP(38,SEC,IMP,2); OP(F8,SED,IMP,2); OP(78,SEI,IMP,2);
+    OP(85,STA,ZP,3);  OP(95,STA,ZPX,4); OP(8D,STA,ABS,4); OP(9D,STA,ABSX,5); OP(99,STA,ABSY,5); OP(81,STA,INDX,6); OP(91,STA,INDY,6);
+    OP(86,STX,ZP,3);  OP(96,STX,ZPY,4); OP(8E,STX,ABS,4); OP(84,STY,ZP,3); OP(94,STY,ZPX,4); OP(8C,STY,ABS,4);
+    OP(AA,TAX,IMP,2); OP(A8,TAY,IMP,2); OP(BA,TSX,IMP,2); OP(8A,TXA,IMP,2); OP(9A,TXS,IMP,2); OP(98,TYA,IMP,2);
 }
-
-uint8_t CPU::read(uint16_t addr) { 
-    cycle_count_this_inst++;
-    uint8_t data = bus->cpuRead(addr, open_bus);
-    if (addr != 0x4015) open_bus = data; 
-    
-    bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
-    poll_nmi();
-    irq_pending = (bus->cart && bus->cart->irqState());
-    
-    cycles++; total_cycles++; return data; 
-}
-
-void CPU::write(uint16_t addr, uint8_t data) { 
-    // WRITES CANNOT BE HALTED BY DMA!
-    cycle_count_this_inst++;
-    open_bus = data;
-    bus->cpuWrite(addr, data);
-    
-    bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
-    poll_nmi();
-    irq_pending = (bus->cart && bus->cart->irqState());
-    
-    cycles++; total_cycles++; 
-}
-
-void CPU::dummy_write(uint16_t addr, uint8_t data) { 
-    // WRITES CANNOT BE HALTED BY DMA!
-    cycle_count_this_inst++;
-    open_bus = data;
-    bus->cpuWrite(addr, data);
-    
-    bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
-    poll_nmi();
-    irq_pending = (bus->cart && bus->cart->irqState());
-    
-    cycles++; total_cycles++; 
-}
-
-void CPU::setFlag(Flags flag, bool value) { if (value) P |= flag; else P &= ~flag; }
-bool CPU::getFlag(Flags flag) { return (P & flag) > 0; }
-void CPU::updateZeroAndNegativeFlags(uint8_t value) { setFlag(Z, value == 0x00); setFlag(N, value & 0x80); }
-
-void CPU::push(uint8_t data) { write(0x0100 + SP, data); SP--; }
-uint8_t CPU::pop() { SP++; return read(0x0100 + SP); }
 
 void CPU::reset() {
-    addr_abs = 0xFFFC;
-    uint16_t lo = read(addr_abs + 0); uint16_t hi = read(addr_abs + 1);
-    PC = (hi << 8) | lo;
-    A = 0; X = 0; Y = 0; SP = 0xFD;
-    P = 0x24; 
-    addr_dummy = 0; fetched = 0; cycles = 0; total_cycles = 0;
-    open_bus = 0; base_hi = 0;
-    nmi_pending = false; nmi_delay = false; irq_pending = false; prev_nmi_line = false;
+    sp = 0xFD; status = 0x24; 
+    pc = bus->read16(0xFFFC);
 }
 
 void CPU::nmi() {
-    read(PC); read(PC); 
-    push((PC >> 8) & 0x00FF); push(PC & 0x00FF);
-    push((P | 0x20) & ~0x10); 
-    setFlag(I, true);
-    addr_abs = 0xFFFA;
-    uint16_t lo = read(addr_abs + 0); uint16_t hi = read(addr_abs + 1);
-    PC = (hi << 8) | lo;
+    push(pc >> 8); push(pc & 0xFF);
+    push(status | U); setFlag(I, true);
+    pc = bus->read16(0xFFFA);
 }
 
-void CPU::irq() {
-    read(PC); read(PC); 
-    push((PC >> 8) & 0x00FF); push(PC & 0x00FF);
-    push((P | 0x20) & ~0x10); 
-    setFlag(I, true);
-    addr_abs = 0xFFFE;
-    uint16_t lo = read(addr_abs + 0); uint16_t hi = read(addr_abs + 1);
-    PC = (hi << 8) | lo;
-}
+uint8_t CPU::fetch() { return bus->read(pc++); }
+void CPU::push(uint8_t val) { bus->write(0x0100 + sp--, val); }
+uint8_t CPU::pop() { return bus->read(0x0100 + ++sp); }
 
-void CPU::IMP() { fetched = A; read(PC); } 
-void CPU::IMM() { addr_abs = PC++; }
-void CPU::ZP0() { addr_abs = read(PC++); }
-void CPU::ZPX() { uint16_t ptr = read(PC++); read(ptr); addr_abs = (ptr + X) & 0x00FF; } 
-void CPU::ZPY() { uint16_t ptr = read(PC++); read(ptr); addr_abs = (ptr + Y) & 0x00FF; } 
-void CPU::REL() { addr_rel = read(PC++); if (addr_rel & 0x80) addr_rel |= 0xFF00; }
-void CPU::ABS() { uint16_t lo = read(PC++); uint16_t hi = read(PC++); addr_abs = (hi << 8) | lo; }
+void CPU::setFlag(uint8_t flag, bool v) { if (v) status |= flag; else status &= ~flag; }
+bool CPU::getFlag(uint8_t flag) { return (status & flag) != 0; }
+void CPU::setZN(uint8_t val) { setFlag(Z, val == 0); setFlag(N, val & 0x80); }
 
-void CPU::ABX() { 
-    uint16_t lo = read(PC++); uint16_t hi = read(PC++); 
-    base_hi = hi; 
-    addr_abs = (hi << 8) | lo; addr_abs += X; 
-    addr_dummy = (hi << 8) | ((lo + X) & 0x00FF);
-    page_crossed = (addr_abs & 0xFF00) != (hi << 8);
-    if (page_crossed || is_write_instr[current_opcode]) read(addr_dummy); 
-}
-void CPU::ABY() { 
-    uint16_t lo = read(PC++); uint16_t hi = read(PC++); 
-    base_hi = hi; 
-    addr_abs = (hi << 8) | lo; addr_abs += Y; 
-    addr_dummy = (hi << 8) | ((lo + Y) & 0x00FF);
-    page_crossed = (addr_abs & 0xFF00) != (hi << 8);
-    if (page_crossed || is_write_instr[current_opcode]) read(addr_dummy); 
-}
-void CPU::IND() { 
-    uint16_t ptr_lo = read(PC++); uint16_t ptr_hi = read(PC++); 
-    uint16_t ptr = (ptr_hi << 8) | ptr_lo; 
-    uint16_t lo = read(ptr);
-    uint16_t hi = (ptr_lo == 0x00FF) ? read(ptr & 0xFF00) : read(ptr + 1);
-    addr_abs = (hi << 8) | lo;
-}
-void CPU::IZX() { 
-    uint16_t t = read(PC++); read(t); 
-    uint16_t lo = read((t + X) & 0x00FF); uint16_t hi = read((t + X + 1) & 0x00FF); 
-    addr_abs = (hi << 8) | lo; 
-}
-void CPU::IZY() { 
-    uint16_t t = read(PC++); 
-    uint16_t lo = read(t & 0x00FF); uint16_t hi = read((t + 1) & 0x00FF); 
-    base_hi = hi; 
-    addr_abs = (hi << 8) | lo; addr_abs += Y; 
-    addr_dummy = (hi << 8) | ((lo + Y) & 0x00FF);
-    page_crossed = (addr_abs & 0xFF00) != (hi << 8);
-    if (page_crossed || is_write_instr[current_opcode]) read(addr_dummy); 
-}
+void CPU::printState() { printf("PC:%04X A:%02X X:%02X Y:%02X P:%02X SP:%02X\n", pc, a, x, y, status, sp); }
 
-void CPU::fetch() { fetched = read(addr_abs); }
-
-void CPU::BRK() { read(PC); PC++; push((PC >> 8) & 0x00FF); push(PC & 0x00FF); push(P | 0x30); setFlag(I, true); uint16_t lo = read(0xFFFE); uint16_t hi = read(0xFFFF); PC = (hi << 8) | lo; }
-void CPU::PHP() { read(PC); push(P | 0x30); } 
-void CPU::PLP() { read(PC); read(0x0100 + SP); P = (pop() & 0xEF) | 0x20; } 
-void CPU::RTI() { read(PC); read(0x0100 + SP); P = (pop() & 0xEF) | 0x20; uint16_t lo = pop(); uint16_t hi = pop(); PC = (hi << 8) | lo; }
-void CPU::RTS() { read(PC); read(0x0100 + SP); uint16_t lo = pop(); uint16_t hi = pop(); PC = (hi << 8) | lo; read(PC); PC++; }
-void CPU::PHA() { read(PC); push(A); }
-void CPU::PLA() { read(PC); read(0x0100 + SP); A = pop(); updateZeroAndNegativeFlags(A); }
-void CPU::JSR() { uint16_t lo = read(PC++); read(0x0100 + SP); push((PC >> 8) & 0x00FF); push(PC & 0x00FF); uint16_t hi = read(PC++); PC = (hi << 8) | lo; }
-
-void CPU::ASL() { fetch(); dummy_write(addr_abs, fetched); uint16_t temp = (uint16_t)fetched << 1; setFlag(C, (temp & 0xFF00) > 0); updateZeroAndNegativeFlags(temp & 0x00FF); write(addr_abs, temp & 0x00FF); }
-void CPU::LSR() { fetch(); dummy_write(addr_abs, fetched); setFlag(C, fetched & 0x0001); uint16_t temp = fetched >> 1; updateZeroAndNegativeFlags(temp & 0x00FF); write(addr_abs, temp & 0x00FF); }
-void CPU::ROL() { fetch(); dummy_write(addr_abs, fetched); uint16_t temp = (uint16_t)(fetched << 1) | getFlag(C); setFlag(C, temp & 0xFF00); updateZeroAndNegativeFlags(temp & 0x00FF); write(addr_abs, temp & 0x00FF); }
-void CPU::ROR() { fetch(); dummy_write(addr_abs, fetched); uint16_t temp = (uint16_t)(getFlag(C) << 7) | (fetched >> 1); setFlag(C, fetched & 0x01); updateZeroAndNegativeFlags(temp & 0x00FF); write(addr_abs, temp & 0x00FF); }
-void CPU::DEC() { fetch(); dummy_write(addr_abs, fetched); uint16_t temp = fetched - 1; write(addr_abs, temp & 0x00FF); updateZeroAndNegativeFlags(temp & 0x00FF); }
-void CPU::INC() { fetch(); dummy_write(addr_abs, fetched); uint16_t temp = fetched + 1; write(addr_abs, temp & 0x00FF); updateZeroAndNegativeFlags(temp & 0x00FF); }
-
-void CPU::BCC() { if (!getFlag(C)) { read(PC); addr_abs = PC + addr_rel; if ((addr_abs & 0xFF00) != (PC & 0xFF00)) read((PC & 0xFF00) | (addr_abs & 0x00FF)); PC = addr_abs; } }
-void CPU::BCS() { if (getFlag(C))  { read(PC); addr_abs = PC + addr_rel; if ((addr_abs & 0xFF00) != (PC & 0xFF00)) read((PC & 0xFF00) | (addr_abs & 0x00FF)); PC = addr_abs; } }
-void CPU::BEQ() { if (getFlag(Z))  { read(PC); addr_abs = PC + addr_rel; if ((addr_abs & 0xFF00) != (PC & 0xFF00)) read((PC & 0xFF00) | (addr_abs & 0x00FF)); PC = addr_abs; } }
-void CPU::BNE() { if (!getFlag(Z)) { read(PC); addr_abs = PC + addr_rel; if ((addr_abs & 0xFF00) != (PC & 0xFF00)) read((PC & 0xFF00) | (addr_abs & 0x00FF)); PC = addr_abs; } }
-void CPU::BMI() { if (getFlag(N))  { read(PC); addr_abs = PC + addr_rel; if ((addr_abs & 0xFF00) != (PC & 0xFF00)) read((PC & 0xFF00) | (addr_abs & 0x00FF)); PC = addr_abs; } }
-void CPU::BPL() { if (!getFlag(N)) { read(PC); addr_abs = PC + addr_rel; if ((addr_abs & 0xFF00) != (PC & 0xFF00)) read((PC & 0xFF00) | (addr_abs & 0x00FF)); PC = addr_abs; } }
-void CPU::BVC() { if (!getFlag(V)) { read(PC); addr_abs = PC + addr_rel; if ((addr_abs & 0xFF00) != (PC & 0xFF00)) read((PC & 0xFF00) | (addr_abs & 0x00FF)); PC = addr_abs; } }
-void CPU::BVS() { if (getFlag(V))  { read(PC); addr_abs = PC + addr_rel; if ((addr_abs & 0xFF00) != (PC & 0xFF00)) read((PC & 0xFF00) | (addr_abs & 0x00FF)); PC = addr_abs; } }
-
-void CPU::ADC() { fetch(); uint16_t temp = (uint16_t)A + (uint16_t)fetched + (uint16_t)getFlag(C); setFlag(C, temp > 255); setFlag(V, (~((uint16_t)A ^ (uint16_t)fetched) & ((uint16_t)A ^ temp)) & 0x0080); A = temp & 0x00FF; updateZeroAndNegativeFlags(A); }
-void CPU::SBC() { fetch(); uint16_t val = ((uint16_t)fetched) ^ 0x00FF; uint16_t temp = (uint16_t)A + val + (uint16_t)getFlag(C); setFlag(C, temp > 255); setFlag(V, (temp ^ (uint16_t)A) & (temp ^ val) & 0x0080); A = temp & 0x00FF; updateZeroAndNegativeFlags(A); }
-void CPU::AND() { fetch(); A &= fetched; updateZeroAndNegativeFlags(A); }
-void CPU::ORA() { fetch(); A |= fetched; updateZeroAndNegativeFlags(A); }
-void CPU::EOR() { fetch(); A ^= fetched; updateZeroAndNegativeFlags(A); }
-void CPU::CMP() { fetch(); uint16_t temp = (uint16_t)A - (uint16_t)fetched; setFlag(C, A >= fetched); updateZeroAndNegativeFlags(temp & 0x00FF); }
-void CPU::CPX() { fetch(); uint16_t temp = (uint16_t)X - (uint16_t)fetched; setFlag(C, X >= fetched); updateZeroAndNegativeFlags(temp & 0x00FF); }
-void CPU::CPY() { fetch(); uint16_t temp = (uint16_t)Y - (uint16_t)fetched; setFlag(C, Y >= fetched); updateZeroAndNegativeFlags(temp & 0x00FF); }
-void CPU::BIT() { fetch(); uint16_t temp = A & fetched; setFlag(Z, (temp & 0x00FF) == 0x00); setFlag(N, fetched & (1 << 7)); setFlag(V, fetched & (1 << 6)); }
-void CPU::LDA() { fetch(); A = fetched; updateZeroAndNegativeFlags(A); }
-void CPU::LDX() { fetch(); X = fetched; updateZeroAndNegativeFlags(X); }
-void CPU::LDY() { fetch(); Y = fetched; updateZeroAndNegativeFlags(Y); }
-void CPU::STA() { write(addr_abs, A); } void CPU::STX() { write(addr_abs, X); } void CPU::STY() { write(addr_abs, Y); }
-
-void CPU::CLC() { read(PC); setFlag(C, false); } void CPU::CLD() { read(PC); setFlag(D, false); } void CPU::CLI() { read(PC); setFlag(I, false); } void CPU::CLV() { read(PC); setFlag(V, false); }
-void CPU::SEC() { read(PC); setFlag(C, true); }  void CPU::SED() { read(PC); setFlag(D, true); }  void CPU::SEI() { read(PC); setFlag(I, true); }
-void CPU::DEX() { read(PC); X--; updateZeroAndNegativeFlags(X); } void CPU::DEY() { read(PC); Y--; updateZeroAndNegativeFlags(Y); }
-void CPU::INX() { read(PC); X++; updateZeroAndNegativeFlags(X); } void CPU::INY() { read(PC); Y++; updateZeroAndNegativeFlags(Y); }
-void CPU::JMP() { PC = addr_abs; }
-void CPU::TAX() { read(PC); X = A; updateZeroAndNegativeFlags(X); } void CPU::TAY() { read(PC); Y = A; updateZeroAndNegativeFlags(Y); }
-void CPU::TSX() { read(PC); X = SP; updateZeroAndNegativeFlags(X); } void CPU::TXA() { read(PC); A = X; updateZeroAndNegativeFlags(A); }
-void CPU::TXS() { read(PC); SP = X; } void CPU::TYA() { read(PC); A = Y; updateZeroAndNegativeFlags(A); }
-void CPU::NOP() { read(PC); }
-
-void CPU::ASL_A() { read(PC); uint16_t temp = (uint16_t)A << 1; setFlag(C, (temp & 0xFF00) > 0); updateZeroAndNegativeFlags(temp & 0x00FF); A = temp & 0x00FF; } 
-void CPU::LSR_A() { read(PC); setFlag(C, A & 0x0001); uint16_t temp = A >> 1; updateZeroAndNegativeFlags(temp & 0x00FF); A = temp & 0x00FF; } 
-void CPU::ROL_A() { read(PC); uint16_t temp = (uint16_t)(A << 1) | getFlag(C); setFlag(C, temp & 0xFF00); updateZeroAndNegativeFlags(temp & 0x00FF); A = temp & 0x00FF; } 
-void CPU::ROR_A() { read(PC); uint16_t temp = (uint16_t)(getFlag(C) << 7) | (A >> 1); setFlag(C, A & 0x01); updateZeroAndNegativeFlags(temp & 0x00FF); A = temp & 0x00FF; } 
-
-void CPU::LAX() { fetch(); A = fetched; X = fetched; updateZeroAndNegativeFlags(A); }
-void CPU::SAX() { write(addr_abs, A & X); }
-void CPU::DCP() { fetch(); dummy_write(addr_abs, fetched); uint16_t t = (fetched - 1) & 0x00FF; write(addr_abs, t); setFlag(C, A >= t); updateZeroAndNegativeFlags((A - t) & 0x00FF); }
-void CPU::ISC() { fetch(); dummy_write(addr_abs, fetched); uint16_t t = (fetched + 1) & 0x00FF; write(addr_abs, t); uint16_t val = t ^ 0x00FF; uint16_t temp = (uint16_t)A + val + (uint16_t)getFlag(C); setFlag(C, temp > 255); setFlag(V, (temp ^ (uint16_t)A) & (temp ^ val) & 0x0080); A = temp & 0x00FF; updateZeroAndNegativeFlags(A); }
-void CPU::SLO() { fetch(); dummy_write(addr_abs, fetched); uint16_t t = (uint16_t)fetched << 1; setFlag(C, (t & 0xFF00) > 0); write(addr_abs, t & 0x00FF); A |= (t & 0x00FF); updateZeroAndNegativeFlags(A); }
-void CPU::RLA() { fetch(); dummy_write(addr_abs, fetched); uint16_t t = (uint16_t)(fetched << 1) | getFlag(C); setFlag(C, t & 0xFF00); write(addr_abs, t & 0x00FF); A &= (t & 0x00FF); updateZeroAndNegativeFlags(A); }
-void CPU::SRE() { fetch(); dummy_write(addr_abs, fetched); setFlag(C, fetched & 0x0001); uint16_t t = fetched >> 1; write(addr_abs, t & 0x00FF); A ^= (t & 0x00FF); updateZeroAndNegativeFlags(A); }
-void CPU::RRA() { fetch(); dummy_write(addr_abs, fetched); uint16_t t = (uint16_t)(getFlag(C) << 7) | (fetched >> 1); setFlag(C, fetched & 0x0001); write(addr_abs, t & 0x00FF); uint16_t temp = (uint16_t)A + t + (uint16_t)getFlag(C); setFlag(C, temp > 255); setFlag(V, (~((uint16_t)A ^ t) & ((uint16_t)A ^ temp)) & 0x0080); A = temp & 0x00FF; updateZeroAndNegativeFlags(A); }
-void CPU::ANC() { fetch(); A &= fetched; updateZeroAndNegativeFlags(A); setFlag(C, getFlag(N)); }
-void CPU::ALR() { fetch(); A &= fetched; setFlag(C, A & 0x01); A >>= 1; updateZeroAndNegativeFlags(A); }
-void CPU::ARR() { fetch(); A &= fetched; uint16_t t = (A >> 1) | (getFlag(C) << 7); setFlag(C, t & 0x40); setFlag(V, ((t >> 6) ^ (t >> 5)) & 0x01); A = t & 0xFF; updateZeroAndNegativeFlags(A); }
-void CPU::AXS() { fetch(); uint16_t t = (A & X) - fetched; setFlag(C, (A & X) >= fetched); X = t & 0x00FF; updateZeroAndNegativeFlags(X); }
-void CPU::SBC_U() { SBC(); } 
-
-void CPU::SHA() { 
-    uint8_t val = A & X & ((addr_dummy >> 8) + 1); 
-    uint16_t target = page_crossed ? ((val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
-    write(target, val); 
-}
-void CPU::SHX() { 
-    uint8_t val = X & ((addr_dummy >> 8) + 1); 
-    uint16_t target = page_crossed ? ((val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
-    write(target, val); 
-}
-void CPU::SHY() { 
-    uint8_t val = Y & ((addr_dummy >> 8) + 1); 
-    uint16_t target = page_crossed ? ((val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
-    write(target, val); 
-}
-void CPU::SHS() { 
-    SP = A & X; 
-    uint8_t val = SP & ((addr_dummy >> 8) + 1); 
-    uint16_t target = page_crossed ? ((val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
-    write(target, val); 
-}
-
-void CPU::LAE() { fetch(); uint8_t val = fetched & SP; A = val; X = val; SP = val; updateZeroAndNegativeFlags(A); }
-void CPU::ANE() { fetch(); A = (A | 0xEE) & X & fetched; updateZeroAndNegativeFlags(A); } 
-void CPU::LXA() { fetch(); A = (A | 0xEE) & fetched; X = A; updateZeroAndNegativeFlags(A); }
-
-int CPU::step() {
-    if (nmi_pending) { 
-        nmi_pending = false; 
-        nmi(); 
-        return cycles; 
-    }
-    
-    // The delay pipeline automatically shifting over
-    if (nmi_delay) { 
-        nmi_delay = false; 
-        nmi_pending = true; 
-    } 
-    
-    if ((irq_pending || bus->apu.irq_active || bus->apu.dmc_irq) && !getFlag(I)) { 
-        irq(); 
-        return cycles; 
-    }
-    
-    cycles = 0;
-    cycle_count_this_inst = 0;
-    nmi_edge_cycle = -1;
-
-    dma_stole_cycle = false;
-    
-    current_opcode = read(PC++); 
-    uint8_t opcode = current_opcode; 
-    addr_dummy = 0; 
-    page_crossed = false; 
-
-    switch (opcode) {
-        case 0x00: BRK(); break; case 0x08: PHP(); break; case 0x18: CLC(); break; case 0x28: PLP(); break;
-        case 0x38: SEC(); break; case 0x40: RTI(); break; case 0x48: PHA(); break; case 0x58: CLI(); break;
-        case 0x60: RTS(); break; case 0x68: PLA(); break; case 0x78: SEI(); break; case 0x88: DEY(); break;
-        case 0x8A: TXA(); break; case 0x98: TYA(); break; case 0x9A: TXS(); break; case 0xA8: TAY(); break;
-        case 0xAA: TAX(); break; case 0xB8: CLV(); break; case 0xBA: TSX(); break; case 0xC8: INY(); break;
-        case 0xCA: DEX(); break; case 0xD8: CLD(); break; case 0xE8: INX(); break; case 0xF8: SED(); break;
-
-        case 0x0A: ASL_A(); break; case 0x2A: ROL_A(); break; case 0x4A: LSR_A(); break; case 0x6A: ROR_A(); break; 
-
-        case 0x69: IMM(); ADC(); break; case 0x65: ZP0(); ADC(); break; case 0x75: ZPX(); ADC(); break; case 0x6D: ABS(); ADC(); break; case 0x7D: ABX(); ADC(); break; case 0x79: ABY(); ADC(); break; case 0x61: IZX(); ADC(); break; case 0x71: IZY(); ADC(); break;
-        case 0xE9: IMM(); SBC(); break; case 0xE5: ZP0(); SBC(); break; case 0xF5: ZPX(); SBC(); break; case 0xED: ABS(); SBC(); break; case 0xFD: ABX(); SBC(); break; case 0xF9: ABY(); SBC(); break; case 0xE1: IZX(); SBC(); break; case 0xF1: IZY(); SBC(); break;
-        case 0x29: IMM(); AND(); break; case 0x25: ZP0(); AND(); break; case 0x35: ZPX(); AND(); break; case 0x2D: ABS(); AND(); break; case 0x3D: ABX(); AND(); break; case 0x39: ABY(); AND(); break; case 0x21: IZX(); AND(); break; case 0x31: IZY(); AND(); break;
-        case 0x09: IMM(); ORA(); break; case 0x05: ZP0(); ORA(); break; case 0x15: ZPX(); ORA(); break; case 0x0D: ABS(); ORA(); break; case 0x1D: ABX(); ORA(); break; case 0x19: ABY(); ORA(); break; case 0x01: IZX(); ORA(); break; case 0x11: IZY(); ORA(); break;
-        case 0x49: IMM(); EOR(); break; case 0x45: ZP0(); EOR(); break; case 0x55: ZPX(); EOR(); break; case 0x4D: ABS(); EOR(); break; case 0x5D: ABX(); EOR(); break; case 0x59: ABY(); EOR(); break; case 0x41: IZX(); EOR(); break; case 0x51: IZY(); EOR(); break;
-        case 0xC9: IMM(); CMP(); break; case 0xC5: ZP0(); CMP(); break; case 0xD5: ZPX(); CMP(); break; case 0xCD: ABS(); CMP(); break; case 0xDD: ABX(); CMP(); break; case 0xD9: ABY(); CMP(); break; case 0xC1: IZX(); CMP(); break; case 0xD1: IZY(); CMP(); break;
-        
-        case 0xA9: IMM(); LDA(); break; case 0xA5: ZP0(); LDA(); break; case 0xB5: ZPX(); LDA(); break; case 0xAD: ABS(); LDA(); break; case 0xBD: ABX(); LDA(); break; case 0xB9: ABY(); LDA(); break; case 0xA1: IZX(); LDA(); break; case 0xB1: IZY(); LDA(); break;
-        case 0xA2: IMM(); LDX(); break; case 0xA6: ZP0(); LDX(); break; case 0xB6: ZPY(); LDX(); break; case 0xAE: ABS(); LDX(); break; case 0xBE: ABY(); LDX(); break;
-        case 0xA0: IMM(); LDY(); break; case 0xA4: ZP0(); LDY(); break; case 0xB4: ZPX(); LDY(); break; case 0xAC: ABS(); LDY(); break; case 0xBC: ABX(); LDY(); break;
-        
-        case 0x85: ZP0(); STA(); break; case 0x95: ZPX(); STA(); break; case 0x8D: ABS(); STA(); break; case 0x9D: ABX(); STA(); break; case 0x99: ABY(); STA(); break; case 0x81: IZX(); STA(); break; case 0x91: IZY(); STA(); break;
-        case 0x86: ZP0(); STX(); break; case 0x96: ZPY(); STX(); break; case 0x8E: ABS(); STX(); break;
-        case 0x84: ZP0(); STY(); break; case 0x94: ZPX(); STY(); break; case 0x8C: ABS(); STY(); break;
-
-        case 0xE6: ZP0(); INC(); break; case 0xF6: ZPX(); INC(); break; case 0xEE: ABS(); INC(); break; case 0xFE: ABX(); INC(); break;
-        case 0xC6: ZP0(); DEC(); break; case 0xD6: ZPX(); DEC(); break; case 0xCE: ABS(); DEC(); break; case 0xDE: ABX(); DEC(); break;
-        case 0x06: ZP0(); ASL(); break; case 0x16: ZPX(); ASL(); break; case 0x0E: ABS(); ASL(); break; case 0x1E: ABX(); ASL(); break;
-        case 0x46: ZP0(); LSR(); break; case 0x56: ZPX(); LSR(); break; case 0x4E: ABS(); LSR(); break; case 0x5E: ABX(); LSR(); break;
-        case 0x26: ZP0(); ROL(); break; case 0x36: ZPX(); ROL(); break; case 0x2E: ABS(); ROL(); break; case 0x3E: ABX(); ROL(); break;
-        case 0x66: ZP0(); ROR(); break; case 0x76: ZPX(); ROR(); break; case 0x6E: ABS(); ROR(); break; case 0x7E: ABX(); ROR(); break;
-
-        case 0xE0: IMM(); CPX(); break; case 0xE4: ZP0(); CPX(); break; case 0xEC: ABS(); CPX(); break;
-        case 0xC0: IMM(); CPY(); break; case 0xC4: ZP0(); CPY(); break; case 0xCC: ABS(); CPY(); break;
-        case 0x24: ZP0(); BIT(); break; case 0x2C: ABS(); BIT(); break;
-        
-        case 0x90: REL(); BCC(); break; case 0xB0: REL(); BCS(); break; case 0xF0: REL(); BEQ(); break; case 0x30: REL(); BMI(); break; 
-        case 0xD0: REL(); BNE(); break; case 0x10: REL(); BPL(); break; case 0x50: REL(); BVC(); break; case 0x70: REL(); BVS(); break;
-        
-        case 0x4C: ABS(); JMP(); break; case 0x6C: IND(); JMP(); break;
-        case 0x20: JSR(); break;
-
-        case 0xEA: read(PC); break; 
-        case 0x1A: case 0x3A: case 0x5A: case 0x7A: case 0xDA: case 0xFA: read(PC); break; 
-        case 0x80: case 0x82: case 0x89: case 0xC2: case 0xE2: IMM(); fetch(); break; 
-        case 0x04: case 0x44: case 0x64: ZP0(); fetch(); break;
-        case 0x14: case 0x34: case 0x54: case 0x74: case 0xD4: case 0xF4: ZPX(); fetch(); break;
-        case 0x0C: ABS(); fetch(); break;
-        case 0x1C: case 0x3C: case 0x5C: case 0x7C: case 0xDC: case 0xFC: ABX(); fetch(); break;
-
-        case 0xA7: ZP0(); LAX(); break; case 0xB7: ZPY(); LAX(); break; case 0xAF: ABS(); LAX(); break; case 0xBF: ABY(); LAX(); break; case 0xA3: IZX(); LAX(); break; case 0xB3: IZY(); LAX(); break;
-        case 0x87: ZP0(); SAX(); break; case 0x97: ZPY(); SAX(); break; case 0x8F: ABS(); SAX(); break; case 0x83: IZX(); SAX(); break;
-        case 0xC7: ZP0(); DCP(); break; case 0xD7: ZPX(); DCP(); break; case 0xCF: ABS(); DCP(); break; case 0xDF: ABX(); DCP(); break; case 0xDB: ABY(); DCP(); break; case 0xC3: IZX(); DCP(); break; case 0xD3: IZY(); DCP(); break;
-        case 0xE7: ZP0(); ISC(); break; case 0xF7: ZPX(); ISC(); break; case 0xEF: ABS(); ISC(); break; case 0xFF: ABX(); ISC(); break; case 0xFB: ABY(); ISC(); break; case 0xE3: IZX(); ISC(); break; case 0xF3: IZY(); ISC(); break;
-        case 0x07: ZP0(); SLO(); break; case 0x17: ZPX(); SLO(); break; case 0x0F: ABS(); SLO(); break; case 0x1F: ABX(); SLO(); break; case 0x1B: ABY(); SLO(); break; case 0x03: IZX(); SLO(); break; case 0x13: IZY(); SLO(); break;
-        case 0x27: ZP0(); RLA(); break; case 0x37: ZPX(); RLA(); break; case 0x2F: ABS(); RLA(); break; case 0x3F: ABX(); RLA(); break; case 0x3B: ABY(); RLA(); break; case 0x23: IZX(); RLA(); break; case 0x33: IZY(); RLA(); break;
-        case 0x47: ZP0(); SRE(); break; case 0x57: ZPX(); SRE(); break; case 0x4F: ABS(); SRE(); break; case 0x5F: ABX(); SRE(); break; case 0x5B: ABY(); SRE(); break; case 0x43: IZX(); SRE(); break; case 0x53: IZY(); SRE(); break;
-        case 0x67: ZP0(); RRA(); break; case 0x77: ZPX(); RRA(); break; case 0x6F: ABS(); RRA(); break; case 0x7F: ABX(); RRA(); break; case 0x7B: ABY(); RRA(); break; case 0x63: IZX(); RRA(); break; case 0x73: IZY(); RRA(); break;
-
-        case 0xEB: IMM(); SBC_U(); break; 
-        case 0x0B: case 0x2B: IMM(); ANC(); break;
-        case 0x4B: IMM(); ALR(); break;
-        case 0x6B: IMM(); ARR(); break;
-        case 0x8B: IMM(); ANE(); break; 
-        case 0xAB: IMM(); LXA(); break; 
-        case 0xCB: IMM(); AXS(); break;
-        
-        case 0x93: IZY(); SHA(); break;
-        case 0x9F: ABY(); SHA(); break;
-        case 0x9E: ABY(); SHX(); break;
-        case 0x9C: ABX(); SHY(); break;
-        case 0x9B: ABY(); SHS(); break;
-        case 0xBB: ABY(); LAE(); break;
-
-        default: read(PC); break;
-    }
-    
-    // The CPU polls for interrupts on the *second to last cycle* of an instruction.
-    // If an NMI pulse occurs on the very last cycle, it completely misses the poll 
-    // and is forced to wait an entire extra instruction!
-    if (nmi_edge_cycle != -1) {
-        if (nmi_edge_cycle < cycle_count_this_inst) {
-            nmi_pending = true;
-        } else {
-            nmi_delay = true;
+uint16_t CPU::getOperandAddress(AddrMode mode) {
+    switch(mode) {
+        case IMP: case ACC: return 0;
+        case IMM: return pc++;
+        case ZP: return fetch();
+        case ZPX: return (fetch() + x) & 0xFF;
+        case ZPY: return (fetch() + y) & 0xFF;
+        case REL: return pc + (int8_t)fetch();
+        case ABS: { uint16_t addr = bus->read16(pc); pc += 2; return addr; }
+        case ABSX: { uint16_t addr = bus->read16(pc) + x; pc += 2; return addr; }
+        case ABSY: { uint16_t addr = bus->read16(pc) + y; pc += 2; return addr; }
+        case IND: {
+            uint16_t ptr = bus->read16(pc); pc += 2;
+            if ((ptr & 0x00FF) == 0x00FF) return (bus->read(ptr & 0xFF00) << 8) | bus->read(ptr);
+            return bus->read16(ptr);
+        }
+        case INDX: {
+            uint8_t ptr = (fetch() + x) & 0xFF;
+            return (bus->read((ptr + 1) & 0xFF) << 8) | bus->read(ptr);
+        }
+        case INDY: {
+            uint8_t ptr = fetch();
+            return ((bus->read((ptr + 1) & 0xFF) << 8) | bus->read(ptr)) + y;
         }
     }
+    return 0;
+}
+
+uint8_t CPU::step() {
+    uint8_t opcode = fetch();
+    OpcodeDecode op = opcodes[opcode];
     
-    return cycles;
+    if (op.inst == XXX) {
+        // CPU crashed! It tried to execute an invalid instruction.
+        printf("CRASH: Unofficial/Unknown Opcode %02X at PC:%04X\n", opcode, pc - 1);
+        return op.cycles;
+    }
+
+    uint16_t addr = getOperandAddress(op.mode);
+    
+    switch(op.inst) {
+        case LDA: a = bus->read(addr); setZN(a); break;
+        case LDX: x = bus->read(addr); setZN(x); break;
+        case LDY: y = bus->read(addr); setZN(y); break;
+        case STA: bus->write(addr, a); break;
+        case STX: bus->write(addr, x); break;
+        case STY: bus->write(addr, y); break;
+        case TAX: x = a; setZN(x); break;
+        case TAY: y = a; setZN(y); break;
+        case TXA: a = x; setZN(a); break;
+        case TYA: a = y; setZN(a); break;
+        case TSX: x = sp; setZN(x); break;
+        case TXS: sp = x; break;
+        case PHA: push(a); break;
+        case PHP: push(status | B | U); break; // FIXED: Added U flag
+        case PLA: a = pop(); setZN(a); break;
+        case PLP: status = (pop() & ~B) | U; break;
+        case AND: a &= bus->read(addr); setZN(a); break;
+        case EOR: a ^= bus->read(addr); setZN(a); break;
+        case ORA: a |= bus->read(addr); setZN(a); break;
+        case BIT: {
+            uint8_t m = bus->read(addr);
+            setFlag(Z, (a & m) == 0); setFlag(V, m & V); setFlag(N, m & N);
+            break;
+        }
+        case ADC: {
+            uint8_t m = bus->read(addr);
+            uint16_t sum = a + m + getFlag(C);
+            setFlag(C, sum > 0xFF);
+            setFlag(V, ~(a ^ m) & (a ^ sum) & 0x80);
+            a = sum & 0xFF; setZN(a); break;
+        }
+        case SBC: {
+            uint8_t m = bus->read(addr) ^ 0xFF;
+            uint16_t sum = a + m + getFlag(C);
+            setFlag(C, sum > 0xFF);
+            setFlag(V, ~(a ^ m) & (a ^ sum) & 0x80);
+            a = sum & 0xFF; setZN(a); break;
+        }
+        case CMP: { uint8_t m = bus->read(addr); setFlag(C, a >= m); setZN(a - m); break; }
+        case CPX: { uint8_t m = bus->read(addr); setFlag(C, x >= m); setZN(x - m); break; }
+        case CPY: { uint8_t m = bus->read(addr); setFlag(C, y >= m); setZN(y - m); break; }
+        case INC: { uint8_t m = bus->read(addr) + 1; bus->write(addr, m); setZN(m); break; }
+        case INX: x++; setZN(x); break;
+        case INY: y++; setZN(y); break;
+        case DEC: { uint8_t m = bus->read(addr) - 1; bus->write(addr, m); setZN(m); break; }
+        case DEX: x--; setZN(x); break;
+        case DEY: y--; setZN(y); break;
+        case ASL: {
+            if (op.mode == ACC) { setFlag(C, a & 0x80); a <<= 1; setZN(a); } 
+            else { uint8_t m = bus->read(addr); setFlag(C, m & 0x80); m <<= 1; bus->write(addr, m); setZN(m); }
+            break;
+        }
+        case LSR: {
+            if (op.mode == ACC) { setFlag(C, a & 0x01); a >>= 1; setZN(a); } 
+            else { uint8_t m = bus->read(addr); setFlag(C, m & 0x01); m >>= 1; bus->write(addr, m); setZN(m); }
+            break;
+        }
+        case ROL: {
+            uint8_t oldC = getFlag(C);
+            if (op.mode == ACC) { setFlag(C, a & 0x80); a = (a << 1) | oldC; setZN(a); } 
+            else { uint8_t m = bus->read(addr); setFlag(C, m & 0x80); m = (m << 1) | oldC; bus->write(addr, m); setZN(m); }
+            break;
+        }
+        case ROR: {
+            uint8_t oldC = getFlag(C);
+            if (op.mode == ACC) { setFlag(C, a & 0x01); a = (a >> 1) | (oldC << 7); setZN(a); } 
+            else { uint8_t m = bus->read(addr); setFlag(C, m & 0x01); m = (m >> 1) | (oldC << 7); bus->write(addr, m); setZN(m); }
+            break;
+        }
+        case JMP: pc = addr; break;
+        // FIXED: Safe evaluation order for subroutine jumps!
+        case JSR: { 
+            uint16_t ret = pc - 1; 
+            push(ret >> 8); 
+            push(ret & 0xFF); 
+            pc = addr; 
+            break; 
+        }
+        case RTS: { 
+            uint16_t lo = pop(); 
+            uint16_t hi = pop(); 
+            pc = (hi << 8) | lo; 
+            pc++; 
+            break; 
+        }
+        case RTI: { 
+            status = (pop() & ~B) | U; 
+            uint16_t lo = pop(); 
+            uint16_t hi = pop(); 
+            pc = (hi << 8) | lo; 
+            break; 
+        }
+        case BCC: if (!getFlag(C)) { pc = addr; op.cycles++; } break;
+        case BCS: if (getFlag(C)) { pc = addr; op.cycles++; } break;
+        case BEQ: if (getFlag(Z)) { pc = addr; op.cycles++; } break;
+        case BNE: if (!getFlag(Z)) { pc = addr; op.cycles++; } break;
+        case BMI: if (getFlag(N)) { pc = addr; op.cycles++; } break;
+        case BPL: if (!getFlag(N)) { pc = addr; op.cycles++; } break;
+        case BVC: if (!getFlag(V)) { pc = addr; op.cycles++; } break;
+        case BVS: if (getFlag(V)) { pc = addr; op.cycles++; } break;
+        case CLC: setFlag(C, false); break;
+        case SEC: setFlag(C, true); break;
+        case CLD: setFlag(D, false); break;
+        case SED: setFlag(D, true); break;
+        case CLI: setFlag(I, false); break;
+        case SEI: setFlag(I, true); break;
+        case CLV: setFlag(V, false); break;
+        case NOP: break;
+        case BRK: 
+            push((pc + 1) >> 8); push((pc + 1) & 0xFF); 
+            push(status | B | U); setFlag(I, true); 
+            pc = bus->read16(0xFFFE); break;
+        case XXX: break;
+    }
+    
+    return op.cycles;
 }
