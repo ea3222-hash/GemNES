@@ -4,7 +4,8 @@ is a NES emulator but developed by AI (Gemini Pro 3.1)
 # Compile
 to compile you need G++ and run this command "g++ APU.cpp Bus.cpp Cartridge.cpp CPU.cpp PPU.cpp main.cpp -std=c++17 -O2 -o GemNES.exe -lcomdlg32 -lwinmm -lgdi32 -luser32"
 # AccuracyCoin TEST
-<img width="512" height="479" alt="image" src="https://github.com/user-attachments/assets/99e20c1b-bcd0-45f2-a3ef-c777e57c8b7d" />
+<img width="768" height="768" alt="image" src="https://github.com/user-attachments/assets/33da8508-6041-4dd4-8d35-d7dca74ac6a5" />
+
 
 
 ### CPU BEHAVIOR
@@ -105,7 +106,7 @@ FAIL 2 : NMI Overlap BRK\
 FAIL 1 : NMI Overlap IRQ
 ### APU Registers and DMA tests
 FAIL 2 : DMA + Open bus\
-FAIL 2 : DMA + $2002 Read\
+PASS : DMA + $2002 Read\
 FAIL 2 : DMA + $2007 Read\
 FAIL 1 : DMA + $2007 Write\
 FAIL 2 : DMA + $4015 Read\
@@ -144,9 +145,9 @@ Palette RAM\
 ### PPU BEHAVIOR
 PASS : CHR ROM Is not writable\
 PASS : PPU Register mirroring\
-FAIL 5 : PPU Register open bus\
+PASS : PPU Register open bus\
 PASS : PPU Read buffer\
-FAIL 6 : Palette RAM Quirks\
+PASS : Palette RAM Quirks\
 PASS : Rendering Flag behavior\
 PASS : $2007 Red W/ Rendering
 ### PPU VBLANK TIMING
