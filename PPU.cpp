@@ -60,7 +60,7 @@ uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
     uint8_t data = ppu_data_latch; 
     
     switch (addr & 0x0007) {
-        case 0x0002:
+        case 0x0002: {
             data = (status & 0xE0) | (ppu_data_latch & 0x1F);
             
             // --- FIX: VBlank Start Timing ---
@@ -87,6 +87,7 @@ uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
             w = 0;           
             update_nmi();
             break;
+        }
             
         case 0x0004:
             data = OAM[oam_addr];
@@ -122,7 +123,8 @@ uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
             break;
     }
     
-    ppu_data_latch = data; 
+    ppu_data_latch = data;
+    latch_decay_timer = 3000000; 
     return data;
 }
 
@@ -161,7 +163,9 @@ void PPU::cpuWrite(uint16_t addr, uint8_t data) {
                 }
             } else { 
                 v += (control & 0x04) ? 32 : 1; 
+                
             }
+            latch_decay_timer = 3000000;
             break;
     }
 }
@@ -196,6 +200,11 @@ uint8_t PPU::ppuRead(uint16_t addr) {
         else if (addr == 0x18) addr = 0x08;
         else if (addr == 0x1C) addr = 0x0C;
         data = paletteTable[addr] & 0x3F;
+
+        // FAIL 6 FIX: Greyscale physically masks out the chroma bits!
+        if (mask & 0x01) {
+            data &= 0x30; 
+        }
     }
     return data;
 }
@@ -450,10 +459,16 @@ void PPU::step() {
             }
         }
     }
+    if (latch_decay_timer > 0) {
+        latch_decay_timer--;
+        if (latch_decay_timer == 0) {
+            ppu_data_latch = 0x00; // The bus capacitance decayed!
+        }
+    }
 
     cycle++;
     if (cycle >= 341) { 
         cycle = 0; scanline++; 
-        if (scanline >= 261) { scanline = -1; frame_complete = true; is_odd_frame = !is_odd_frame; } 
+        if (scanline >= 261) { scanline = -1; frame_complete = true; is_odd_frame = !is_odd_frame; }
     }
 }
