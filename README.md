@@ -14,7 +14,7 @@ Mapper 4\
 Mapper 7\
 Mapper 66\
 Mapper 69\
-Mapper 90\
+Mapper 90
 
 ### CPU BEHAVIOR
 PASS : Rom is not writable\
