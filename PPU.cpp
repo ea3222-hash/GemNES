@@ -94,6 +94,11 @@ uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
             if ((oam_addr & 0x03) == 0x02) {
                 data &= 0xE3; 
             }
+            if ((mask & 0x18) && (scanline >= -1 && scanline < 240)) {
+                oam_addr += 4; 
+            } else {
+                OAM[oam_addr++] = data; 
+            }
             break;
             
         case 0x0007:
@@ -290,13 +295,23 @@ void PPU::step() {
             if (scanline == -1 && cycle >= 280 && cycle < 305) v = (v & ~0x7BE0) | (t & 0x7BE0); 
         }
 
+        // --- FIX FOR FAIL 2: OAM Corruption happens at cycle 65! ---
+        if (cycle == 65 && scanline >= -1 && scanline < 240) {
+            if (rendering_enabled) {
+                eval_oam_addr = oam_addr; // Latch the address for evaluation
+                if (eval_oam_addr >= 8) {
+                    uint8_t row = eval_oam_addr & 0xF8;
+                    for (int i = 0; i < 8; i++) OAM[row + i] = OAM[i];
+                }
+            } else {
+                eval_oam_addr = 0;
+            }
+        }
+
+        // --- FIX FOR FAIL 1 & 1: Misaligned OAM & Arbitrary Sprite 0 ---
         if (cycle == 257 && scanline >= -1 && scanline < 240) {
             if (rendering_enabled) {
-                if (oam_addr >= 8) {
-                    uint8_t row = oam_addr & 0xF8;
-                    for (int i = 0; i < 8; i++) OAM[i] = OAM[row + i];
-                }
-                oam_addr = 0;
+                oam_addr = 0; // Hardware unconditionally resets OAMADDR to 0
             }
 
             memset(spriteScanline, 0xFF, sizeof(spriteScanline));
@@ -304,22 +319,32 @@ void PPU::step() {
             int spriteSize = (control & 0x20) ? 16 : 8; 
             int eval_y = (scanline == -1) ? 255 : scanline;
 
-            int OAMEntry = 0;
-            while (OAMEntry < 64 && sprite_count < 9) {
-                int diff = eval_y - OAM[OAMEntry * 4];
+            int loops = 0;
+            while (loops < 64 && sprite_count < 9) {
+                // If misaligned, ALL sprites evaluate with a shifted byte offset!
+                int addr = (eval_oam_addr + loops * 4) % 256;
+                uint8_t y    = OAM[addr];
+                uint8_t id   = OAM[(addr + 1) % 256];
+                uint8_t attr = OAM[(addr + 2) % 256];
+                uint8_t x    = OAM[(addr + 3) % 256];
+                
+                int diff = eval_y - y;
                 if (diff >= 0 && diff < spriteSize) {
                     if (sprite_count < 8) {
-                        spriteScanline[sprite_count].y = OAM[OAMEntry * 4];
-                        spriteScanline[sprite_count].id = OAM[OAMEntry * 4 + 1];
-                        spriteScanline[sprite_count].attribute = OAM[OAMEntry * 4 + 2];
-                        spriteScanline[sprite_count].x = OAM[OAMEntry * 4 + 3];
-                        spriteScanline[sprite_count].isSpriteZero = (OAMEntry == 0); 
+                        spriteScanline[sprite_count].y = y;
+                        spriteScanline[sprite_count].id = id;
+                        spriteScanline[sprite_count].attribute = attr;
+                        spriteScanline[sprite_count].x = x;
+                        
+                        // Sprite Zero ONLY triggers if the data physically originated
+                        // from the first 4 bytes of OAM memory!
+                        spriteScanline[sprite_count].isSpriteZero = (addr < 4); 
                     }
                     sprite_count++;
                 }
-                OAMEntry++;
+                loops++;
             }
-            if (sprite_count > 8 && scanline >= 0) status |= 0x20; 
+            if (sprite_count > 8 && scanline >= 0 && rendering_enabled) status |= 0x20; 
         }
 
         if (cycle == 340 && scanline >= -1 && scanline < 240) {
