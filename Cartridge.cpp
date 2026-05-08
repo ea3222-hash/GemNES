@@ -30,7 +30,6 @@ Cartridge::Cartridge(const std::string& fileName) {
         prg_banks = header.prg_rom_chunks;
         chr_banks = header.chr_rom_chunks;
 
-        // --- FIX: Prevent Modulo Zero Crashes from bad dumps! ---
         if (prg_banks == 0) {
             prg_banks = 1;
         }
@@ -45,9 +44,8 @@ Cartridge::Cartridge(const std::string& fileName) {
             chr_memory.resize(8192); 
         }
 
-        // --- FIX: Map Initial Banks for Mappers 0, 1, 2, 3 ---
         prg_offsets[0] = 0; 
-        prg_offsets[1] = (prg_banks - 1) * 16384; // Mapper 2 uses this
+        prg_offsets[1] = (prg_banks - 1) * 16384; 
         chr_offsets[0] = 0; 
         chr_offsets[1] = 4096;
         
@@ -65,10 +63,28 @@ bool Cartridge::isLoaded() const { return loaded; }
 bool Cartridge::irqState() const { return irq_active; }
 
 void Cartridge::scanline() {
-    if (mapper_id != 4) return;
-    if (irq_counter == 0 || irq_reload) { irq_counter = irq_latch; irq_reload = false; } 
-    else { irq_counter--; }
-    if (irq_counter == 0 && irq_enable) { irq_active = true; }
+    if (mapper_id == 4) {
+        if (irq_counter == 0 || irq_reload) { irq_counter = irq_latch; irq_reload = false; } 
+        else { irq_counter--; }
+        if (irq_counter == 0 && irq_enable) { irq_active = true; }
+    }
+    else if (mapper_id == 69) {
+        // FME-7 IRQ actually ticks every CPU cycle, 114 ticks per scanline is a highly accurate proxy
+        if (fme7_irq_counter_enable) {
+            if (fme7_irq_counter <= 114) {
+                if (fme7_irq_enable) irq_active = true;
+            }
+            fme7_irq_counter -= 114; // Will intentionally wrap around as per hardware
+        }
+    }
+    else if (mapper_id == 90) {
+        if (map90_irq_enable) {
+            map90_irq_counter--;
+            if (map90_irq_counter == 0) {
+                irq_active = true;
+            }
+        }
+    }
 }
 
 void Cartridge::reset() {
@@ -77,11 +93,11 @@ void Cartridge::reset() {
         chr_bank_0 = 0x00; chr_bank_1 = 0x00; prg_bank = 0x00;
         Update_MMC1_Offsets();
     } 
-    else if (mapper_id == 2) { // UxROM Reset
+    else if (mapper_id == 2) { 
         prg_offsets[0] = 0;
         prg_offsets[1] = (prg_banks - 1) * 16384;
     }
-    else if (mapper_id == 3) { // CNROM Reset
+    else if (mapper_id == 3) { 
         chr_offsets[0] = 0;
     }
     else if (mapper_id == 4) {
@@ -90,19 +106,51 @@ void Cartridge::reset() {
         irq_latch = 0; irq_counter = 0; irq_enable = false; irq_reload = false; irq_active = false;
         Update_MMC3_Offsets();
     }
+    else if (mapper_id == 69) {
+        fme7_command = 0; fme7_irq_counter = 0; fme7_irq_enable = false; fme7_irq_counter_enable = false;
+        fme7_prg_ram_enable = false; fme7_prg_ram_rom = false; fme7_prg_ram_offset = 0;
+        
+        fme7_prg_offsets[0] = 0;
+        fme7_prg_offsets[1] = 8192 % prg_memory.size();
+        fme7_prg_offsets[2] = 16384 % prg_memory.size();
+        fme7_prg_offsets[3] = (((prg_banks * 2) - 1) * 8192) % prg_memory.size();
+        for (int i = 0; i < 8; i++) fme7_chr_offsets[i] = (i * 1024) % chr_memory.size();
+    }
+    else if (mapper_id == 90) {
+        map90_irq_counter = 0; map90_irq_enable = false; map90_mul1 = 0; map90_mul2 = 0;
+        
+        uint32_t last_bank = (prg_banks * 2) > 0 ? (prg_banks * 2) - 1 : 0;
+        map90_prg_offsets[0] = ((last_bank > 3 ? last_bank - 3 : 0) * 8192) % prg_memory.size();
+        map90_prg_offsets[1] = ((last_bank > 2 ? last_bank - 2 : 0) * 8192) % prg_memory.size();
+        map90_prg_offsets[2] = ((last_bank > 1 ? last_bank - 1 : 0) * 8192) % prg_memory.size();
+        map90_prg_offsets[3] = (last_bank * 8192) % prg_memory.size();
+        for (int i = 0; i < 8; i++) map90_chr_offsets[i] = (i * 1024) % chr_memory.size();
+    }
 }
 
 bool Cartridge::cpuRead(uint16_t addr, uint8_t& data) {
-    if (addr >= 0x6000 && addr <= 0x7FFF) {
-        if (mapper_id == 1 || mapper_id == 4) {
+    if (addr >= 0x5000 && addr <= 0x5FFF) {
+        if (mapper_id == 90) { // JY Company ASIC Math
+            if (addr == 0x5800) { data = (map90_mul1 * map90_mul2) & 0xFF; return true; }
+            if (addr == 0x5801) { data = ((map90_mul1 * map90_mul2) >> 8) & 0xFF; return true; }
+        }
+    }
+    else if (addr >= 0x6000 && addr <= 0x7FFF) {
+        if (mapper_id == 1 || mapper_id == 4 || mapper_id == 90) {
             data = prg_ram[addr & 0x1FFF]; 
             return true;
         }
+        else if (mapper_id == 69) {
+            if (fme7_prg_ram_enable) {
+                if (fme7_prg_ram_rom) data = prg_memory[(fme7_prg_ram_offset + (addr & 0x1FFF)) % prg_memory.size()];
+                else data = prg_ram[addr & 0x1FFF];
+                return true;
+            }
+        }
         return false; 
     }
-    if (addr >= 0x8000) {
-        // --- FIX: Add Mappers 2 and 3 natively + Modulo Protection ---
-        if (mapper_id == 0 || mapper_id == 1 || mapper_id == 2 || mapper_id == 3) {
+    else if (addr >= 0x8000) {
+        if (mapper_id == 0 || mapper_id == 1 || mapper_id == 2 || mapper_id == 3 || mapper_id == 7 || mapper_id == 66) {
             if (addr <= 0xBFFF) data = prg_memory[(prg_offsets[0] + (addr & 0x3FFF)) % prg_memory.size()];
             else                data = prg_memory[(prg_offsets[1] + (addr & 0x3FFF)) % prg_memory.size()];
         } 
@@ -110,34 +158,97 @@ bool Cartridge::cpuRead(uint16_t addr, uint8_t& data) {
             uint8_t bank = (addr - 0x8000) / 0x2000;
             data = prg_memory[(mmc3_prg_offsets[bank] + (addr & 0x1FFF)) % prg_memory.size()];
         }
+        else if (mapper_id == 69) {
+            uint8_t bank = (addr - 0x8000) / 0x2000;
+            data = prg_memory[(fme7_prg_offsets[bank] + (addr & 0x1FFF)) % prg_memory.size()];
+        }
+        else if (mapper_id == 90) {
+            uint8_t bank = (addr - 0x8000) / 0x2000;
+            data = prg_memory[(map90_prg_offsets[bank] + (addr & 0x1FFF)) % prg_memory.size()];
+        }
         return true;
     }
     return false;
 }
 
 bool Cartridge::cpuWrite(uint16_t addr, uint8_t data) {
-    if (addr >= 0x6000 && addr <= 0x7FFF) {
-        if (mapper_id == 1 || mapper_id == 4) { prg_ram[addr & 0x1FFF] = data; return true; }
+    if (addr >= 0x5000 && addr <= 0x5FFF) {
+        if (mapper_id == 90) {
+            if (addr == 0x5800) { map90_mul1 = data; return true; }
+            if (addr == 0x5801) { map90_mul2 = data; return true; }
+        }
+    }
+    else if (addr >= 0x6000 && addr <= 0x7FFF) {
+        if (mapper_id == 1 || mapper_id == 4 || mapper_id == 90) { 
+            prg_ram[addr & 0x1FFF] = data; return true; 
+        }
+        else if (mapper_id == 69) {
+            if (fme7_prg_ram_enable && !fme7_prg_ram_rom) { prg_ram[addr & 0x1FFF] = data; return true; }
+        }
         return false; 
     }
-    if (addr >= 0x8000) {
+    else if (addr >= 0x8000) {
         if (mapper_id == 1) MMC1_Write(addr, data); 
         else if (mapper_id == 4) MMC3_Write(addr, data); 
-        else if (mapper_id == 2) { // Mapper 2: UxROM
-            prg_offsets[0] = (data & 0x0F) * 16384; 
-        }
-        else if (mapper_id == 3) { // Mapper 3: CNROM
-            chr_offsets[0] = (data & 0x03) * 8192; 
-        }
-        else if (mapper_id == 7) { // Mapper 7: AxROM (Battletoads, Marble Madness)
+        else if (mapper_id == 2) { prg_offsets[0] = (data & 0x0F) * 16384; }
+        else if (mapper_id == 3) { chr_offsets[0] = (data & 0x03) * 8192; }
+        else if (mapper_id == 7) { 
             prg_offsets[0] = (data & 0x07) * 32768;
             prg_offsets[1] = prg_offsets[0] + 16384;
             mirror = (data & 0x10) ? ONESCREEN_HI : ONESCREEN_LO;
         }
-        else if (mapper_id == 66) { // Mapper 66: GxROM (SMB/Duck Hunt)
+        else if (mapper_id == 66) { 
             prg_offsets[0] = ((data >> 4) & 0x03) * 32768;
             prg_offsets[1] = prg_offsets[0] + 16384;
             chr_offsets[0] = (data & 0x03) * 8192;
+        }
+        else if (mapper_id == 69) {
+            if (addr <= 0x9FFF) { fme7_command = data & 0x0F; } 
+            else if (addr >= 0xA000 && addr <= 0xBFFF) {
+                switch(fme7_command) {
+                    case 0: case 1: case 2: case 3: case 4: case 5: case 6: case 7:
+                        fme7_chr_offsets[fme7_command] = (data & ((chr_banks * 8) - 1)) * 1024; break;
+                    case 8:
+                        fme7_prg_ram_enable = data & 0x80;
+                        fme7_prg_ram_rom = data & 0x40;
+                        fme7_prg_ram_offset = (data & 0x3F) * 8192; break;
+                    case 9: fme7_prg_offsets[0] = (data & 0x3F) * 8192; break;
+                    case 0xA: fme7_prg_offsets[1] = (data & 0x3F) * 8192; break;
+                    case 0xB: fme7_prg_offsets[2] = (data & 0x3F) * 8192; break;
+                    case 0xC:
+                        switch (data & 0x03) {
+                            case 0: mirror = VERTICAL; break; case 1: mirror = HORIZONTAL; break;
+                            case 2: mirror = ONESCREEN_LO; break; case 3: mirror = ONESCREEN_HI; break;
+                        }
+                        break;
+                    case 0xD:
+                        fme7_irq_enable = data & 0x01; fme7_irq_counter_enable = data & 0x80;
+                        irq_active = false; break;
+                    case 0xE: fme7_irq_counter = (fme7_irq_counter & 0xFF00) | data; break;
+                    case 0xF: fme7_irq_counter = (fme7_irq_counter & 0x00FF) | (data << 8); break;
+                }
+            }
+        }
+        else if (mapper_id == 90) {
+            if (addr >= 0x8000 && addr <= 0x8003) {
+                uint32_t prg_mask = (prg_banks * 2) - 1;
+                if (prg_banks == 0) prg_mask = 0;
+                map90_prg_offsets[addr & 3] = (data & prg_mask) * 8192;
+            }
+            else if (addr >= 0x9000 && addr <= 0x9007) {
+                uint32_t chr_mask = (chr_banks * 8) - 1;
+                if (chr_banks == 0) chr_mask = 7;
+                map90_chr_offsets[addr & 7] = (data & chr_mask) * 1024;
+            }
+            else if (addr == 0xC002) { map90_irq_enable = true; }
+            else if (addr == 0xC003) { map90_irq_enable = false; irq_active = false; }
+            else if (addr == 0xC004) { map90_irq_counter = data; }
+            else if (addr == 0xD000) {
+                switch (data & 0x03) {
+                    case 0: mirror = VERTICAL; break; case 1: mirror = HORIZONTAL; break;
+                    case 2: mirror = ONESCREEN_LO; break; case 3: mirror = ONESCREEN_HI; break;
+                }
+            }
         }
         return true;
     }
@@ -146,7 +257,6 @@ bool Cartridge::cpuWrite(uint16_t addr, uint8_t data) {
 
 bool Cartridge::ppuRead(uint16_t addr, uint8_t& data) {
     if (addr <= 0x1FFF) {
-        // --- FIX: Add Mappers 2 and 3 natively + Modulo Protection ---
         if (mapper_id == 0 || mapper_id == 1 || mapper_id == 2 || mapper_id == 7) {
             if (addr < 0x1000) data = chr_memory[(chr_offsets[0] + (addr & 0x0FFF)) % chr_memory.size()];
             else               data = chr_memory[(chr_offsets[1] + (addr & 0x0FFF)) % chr_memory.size()];
@@ -158,6 +268,14 @@ bool Cartridge::ppuRead(uint16_t addr, uint8_t& data) {
             uint8_t bank = addr >> 10; 
             data = chr_memory[(mmc3_chr_offsets[bank] + (addr & 0x03FF)) % chr_memory.size()];
         }
+        else if (mapper_id == 69) {
+            uint8_t bank = addr >> 10; 
+            data = chr_memory[(fme7_chr_offsets[bank] + (addr & 0x03FF)) % chr_memory.size()];
+        }
+        else if (mapper_id == 90) {
+            uint8_t bank = addr >> 10; 
+            data = chr_memory[(map90_chr_offsets[bank] + (addr & 0x03FF)) % chr_memory.size()];
+        }
         return true;
     }
     return false;
@@ -165,7 +283,6 @@ bool Cartridge::ppuRead(uint16_t addr, uint8_t& data) {
 
 bool Cartridge::ppuWrite(uint16_t addr, uint8_t data) {
     if (chr_banks == 0 && addr <= 0x1FFF) {
-        // --- FIX: Add Mappers 2 and 3 natively + Modulo Protection ---
         if (mapper_id == 0 || mapper_id == 1 || mapper_id == 2 || mapper_id == 3 || mapper_id == 7) {
             if (addr < 0x1000) chr_memory[(chr_offsets[0] + (addr & 0x0FFF)) % chr_memory.size()] = data;
             else               chr_memory[(chr_offsets[1] + (addr & 0x0FFF)) % chr_memory.size()] = data;
@@ -173,6 +290,14 @@ bool Cartridge::ppuWrite(uint16_t addr, uint8_t data) {
         else if (mapper_id == 4) {
             uint8_t bank = addr >> 10; 
             chr_memory[(mmc3_chr_offsets[bank] + (addr & 0x03FF)) % chr_memory.size()] = data;
+        }
+        else if (mapper_id == 69) {
+            uint8_t bank = addr >> 10; 
+            chr_memory[(fme7_chr_offsets[bank] + (addr & 0x03FF)) % chr_memory.size()] = data;
+        }
+        else if (mapper_id == 90) {
+            uint8_t bank = addr >> 10; 
+            chr_memory[(map90_chr_offsets[bank] + (addr & 0x03FF)) % chr_memory.size()] = data;
         }
         return true;
     }
