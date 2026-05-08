@@ -123,13 +123,21 @@ bool Cartridge::cpuWrite(uint16_t addr, uint8_t data) {
     if (addr >= 0x8000) {
         if (mapper_id == 1) MMC1_Write(addr, data); 
         else if (mapper_id == 4) MMC3_Write(addr, data); 
-        else if (mapper_id == 2) { 
-            // --- FIX: Mapper 2 (UxROM) Bank Switch! ---
+        else if (mapper_id == 2) { // Mapper 2: UxROM
             prg_offsets[0] = (data & 0x0F) * 16384; 
         }
-        else if (mapper_id == 3) { 
-            // --- FIX: Mapper 3 (CNROM) Bank Switch! ---
+        else if (mapper_id == 3) { // Mapper 3: CNROM
             chr_offsets[0] = (data & 0x03) * 8192; 
+        }
+        else if (mapper_id == 7) { // Mapper 7: AxROM (Battletoads, Marble Madness)
+            prg_offsets[0] = (data & 0x07) * 32768;
+            prg_offsets[1] = prg_offsets[0] + 16384;
+            mirror = (data & 0x10) ? ONESCREEN_HI : ONESCREEN_LO;
+        }
+        else if (mapper_id == 66) { // Mapper 66: GxROM (SMB/Duck Hunt)
+            prg_offsets[0] = ((data >> 4) & 0x03) * 32768;
+            prg_offsets[1] = prg_offsets[0] + 16384;
+            chr_offsets[0] = (data & 0x03) * 8192;
         }
         return true;
     }
@@ -139,7 +147,7 @@ bool Cartridge::cpuWrite(uint16_t addr, uint8_t data) {
 bool Cartridge::ppuRead(uint16_t addr, uint8_t& data) {
     if (addr <= 0x1FFF) {
         // --- FIX: Add Mappers 2 and 3 natively + Modulo Protection ---
-        if (mapper_id == 0 || mapper_id == 1 || mapper_id == 2) {
+        if (mapper_id == 0 || mapper_id == 1 || mapper_id == 2 || mapper_id == 7) {
             if (addr < 0x1000) data = chr_memory[(chr_offsets[0] + (addr & 0x0FFF)) % chr_memory.size()];
             else               data = chr_memory[(chr_offsets[1] + (addr & 0x0FFF)) % chr_memory.size()];
         } 
@@ -158,7 +166,7 @@ bool Cartridge::ppuRead(uint16_t addr, uint8_t& data) {
 bool Cartridge::ppuWrite(uint16_t addr, uint8_t data) {
     if (chr_banks == 0 && addr <= 0x1FFF) {
         // --- FIX: Add Mappers 2 and 3 natively + Modulo Protection ---
-        if (mapper_id == 0 || mapper_id == 1 || mapper_id == 2 || mapper_id == 3) {
+        if (mapper_id == 0 || mapper_id == 1 || mapper_id == 2 || mapper_id == 3 || mapper_id == 7) {
             if (addr < 0x1000) chr_memory[(chr_offsets[0] + (addr & 0x0FFF)) % chr_memory.size()] = data;
             else               chr_memory[(chr_offsets[1] + (addr & 0x0FFF)) % chr_memory.size()] = data;
         } 
