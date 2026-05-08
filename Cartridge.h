@@ -52,15 +52,32 @@ private:
     uint8_t mmc3_registers[8] = {0};
     uint32_t mmc3_prg_offsets[4] = {0};
     uint32_t mmc3_chr_offsets[8] = {0};
-
     uint8_t irq_latch = 0;
     uint8_t irq_counter = 0;
     bool irq_enable = false;
     bool irq_reload = false;
     bool irq_active = false;
-
     void MMC3_Write(uint16_t addr, uint8_t data);
     void Update_MMC3_Offsets();
+
+    // Mapper 69 (Sunsoft FME-7)
+    uint8_t fme7_command = 0;
+    uint32_t fme7_prg_offsets[4] = {0};
+    uint32_t fme7_chr_offsets[8] = {0};
+    uint32_t fme7_prg_ram_offset = 0;
+    uint16_t fme7_irq_counter = 0;
+    bool fme7_irq_enable = false;
+    bool fme7_irq_counter_enable = false;
+    bool fme7_prg_ram_enable = false;
+    bool fme7_prg_ram_rom = false;
+
+    // Mapper 90 (JY Company)
+    uint32_t map90_prg_offsets[4] = {0};
+    uint32_t map90_chr_offsets[8] = {0};
+    uint8_t map90_mul1 = 0;
+    uint8_t map90_mul2 = 0;
+    uint8_t map90_irq_counter = 0;
+    bool map90_irq_enable = false;
 };
 
 #endif // CARTRIDGE_H
