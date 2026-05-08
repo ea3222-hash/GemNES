@@ -1,6 +1,6 @@
 #include <iostream>
 #include <windows.h>
-#include <mmsystem.h> 
+#include <mmsystem.h> // Includes joyGetPosEx for USB Controllers
 #include <commdlg.h> 
 #include <string>
 #include <chrono>
@@ -19,7 +19,7 @@
 #define MENU_GAME_SAVE 1008
 #define MENU_GAME_LOAD 1009
 #define MENU_GAME_KEYS 1006 
-#define MENU_GAME_FCEUX 1011 // <-- FCEUX MODE TOGGLE
+#define MENU_GAME_FCEUX 1011 
 #define MENU_CHEAT_GENIE 1004
 #define MENU_CHEAT_CLEAR 1005
 #define MENU_AUDIO_VOLUMES 1007 
@@ -31,7 +31,15 @@ HMENU hMenu, hSubMenuFile, hSubMenuGame, hSubMenuCheats, hSubMenuAudio;
 
 bool is_paused = false;
 
-int keybinds[8] = {'K', 'L', 'O', 'I', 'W', 'S', 'A', 'D'};
+struct InputBind {
+    bool is_joystick;
+    int code; // VK_ keycode for keyboard OR button bitmask for joystick
+};
+
+InputBind keybinds[8] = {
+    {false, 'K'}, {false, 'L'}, {false, 'O'}, {false, 'I'}, 
+    {false, 'W'}, {false, 'S'}, {false, 'A'}, {false, 'D'}
+};
 const char* keyNames[8] = {"A", "B", "Select", "Start", "Up", "Down", "Left", "Right"};
 
 const int SAMPLE_RATE = 44100;
@@ -160,15 +168,82 @@ std::string SelectROMDialog() {
 int current_key_mapping = 0;
 HWND hwndDialog = NULL;
 
+// Helper to format Key code as A, T, or 234 as you requested
+std::string GetBindName(InputBind bind) {
+    if (bind.is_joystick) {
+        // Find which button number is pressed from the bitmask
+        for (int i = 0; i < 32; i++) {
+            if (bind.code & (1 << i)) return "Joy " + std::to_string(i + 1);
+        }
+        return "Joy";
+    } else {
+        // If it's a real font character A-Z or 0-9
+        if ((bind.code >= 'A' && bind.code <= 'Z') || (bind.code >= '0' && bind.code <= '9')) {
+            return std::string(1, (char)bind.code);
+        }
+        // Otherwise show the decimal ASCII code
+        return std::to_string(bind.code);
+    }
+}
+
 LRESULT CALLBACK KeybindProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
-        case WM_INITDIALOG: SetWindowText(hDlg, "Press key for A"); current_key_mapping = 0; return TRUE;
-        case WM_KEYDOWN:
-            keybinds[current_key_mapping] = wParam; current_key_mapping++;
-            if (current_key_mapping >= 8) { DestroyWindow(hDlg); is_paused = false; } 
-            else { std::string title = "Press key for " + std::string(keyNames[current_key_mapping]); SetWindowText(hDlg, title.c_str()); }
+        case WM_INITDIALOG:
+            SetWindowText(hDlg, "Press key/button for A");
+            current_key_mapping = 0;
+            SetTimer(hDlg, 1, 16, NULL); // Poll USB controller at ~60fps
             return TRUE;
-        case WM_DESTROY: hwndDialog = NULL; is_paused = false; return TRUE;
+            
+        case WM_KEYDOWN:
+            // Keyboard Input
+            keybinds[current_key_mapping] = {false, (int)wParam};
+            current_key_mapping++;
+            if (current_key_mapping >= 8) { 
+                DestroyWindow(hDlg); 
+            } else { 
+                std::string title = "Press key/button for " + std::string(keyNames[current_key_mapping]); 
+                SetWindowText(hDlg, title.c_str()); 
+            }
+            return TRUE;
+
+        case WM_TIMER: {
+            // Poll USB Controller (Joystick) Input
+            JOYINFOEX joy;
+            joy.dwSize = sizeof(joy);
+            joy.dwFlags = JOY_RETURNBUTTONS;
+            if (joyGetPosEx(JOYSTICKID1, &joy) == JOYERR_NOERROR) {
+                if (joy.dwButtons > 0) { // A button is pressed!
+                    keybinds[current_key_mapping] = {true, (int)joy.dwButtons};
+                    
+                    // Wait for button release so it doesn't instantly fill all 8 binds
+                    while (joyGetPosEx(JOYSTICKID1, &joy) == JOYERR_NOERROR && joy.dwButtons > 0) {
+                        Sleep(10); 
+                    }
+
+                    current_key_mapping++;
+                    if (current_key_mapping >= 8) { 
+                        DestroyWindow(hDlg); 
+                    } else { 
+                        std::string title = "Press key/button for " + std::string(keyNames[current_key_mapping]); 
+                        SetWindowText(hDlg, title.c_str()); 
+                    }
+                }
+            }
+            return TRUE;
+        }
+
+        case WM_DESTROY: 
+            KillTimer(hDlg, 1);
+            hwndDialog = NULL; 
+            is_paused = false; 
+            
+            // Print out the mapped controls nicely
+            std::cout << "\n--- Current Controls ---\n";
+            for(int i=0; i<8; i++) {
+                std::cout << keyNames[i] << " : " << GetBindName(keybinds[i]) << "\n";
+            }
+            std::cout << "------------------------\n";
+            return TRUE;
     }
     return DefWindowProc(hDlg, message, wParam, lParam);
 }
@@ -383,16 +458,38 @@ int main() {
                     nes_bus.controller[0] = 0x00; nes_bus.controller[1] = 0x00;
                 }
             } else {
-                nes_bus.controller[0] = 0x00; nes_bus.controller[1] = 0x00;
+                nes_bus.controller[0] = 0x00; 
+                nes_bus.controller[1] = 0x00;
+                
                 if (GetForegroundWindow() == hwnd) {
-                    nes_bus.controller[0] |= (GetAsyncKeyState(keybinds[0]) & 0x8000) ? 0x80 : 0x00; 
-                    nes_bus.controller[0] |= (GetAsyncKeyState(keybinds[1]) & 0x8000) ? 0x40 : 0x00; 
-                    nes_bus.controller[0] |= (GetAsyncKeyState(keybinds[2]) & 0x8000) ? 0x20 : 0x00; 
-                    nes_bus.controller[0] |= (GetAsyncKeyState(keybinds[3]) & 0x8000) ? 0x10 : 0x00; 
-                    nes_bus.controller[0] |= (GetAsyncKeyState(keybinds[4]) & 0x8000) ? 0x08 : 0x00; 
-                    nes_bus.controller[0] |= (GetAsyncKeyState(keybinds[5]) & 0x8000) ? 0x04 : 0x00; 
-                    nes_bus.controller[0] |= (GetAsyncKeyState(keybinds[6]) & 0x8000) ? 0x02 : 0x00; 
-                    nes_bus.controller[0] |= (GetAsyncKeyState(keybinds[7]) & 0x8000) ? 0x01 : 0x00; 
+                    // --- FPS FIX: Only poll USB if a joystick button is actually mapped! ---
+                    bool needs_joystick = false;
+                    for (int i = 0; i < 8; i++) {
+                        if (keybinds[i].is_joystick) needs_joystick = true;
+                    }
+
+                    JOYINFOEX joy;
+                    bool joy_connected = false;
+                    if (needs_joystick) {
+                        joy.dwSize = sizeof(joy);
+                        joy.dwFlags = JOY_RETURNBUTTONS;
+                        joy_connected = (joyGetPosEx(JOYSTICKID1, &joy) == JOYERR_NOERROR);
+                    }
+
+                    // Map 0=A, 1=B, 2=Select, 3=Start, 4=Up, 5=Down, 6=Left, 7=Right
+                    uint8_t bitmasks[8] = {0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01};
+
+                    for (int i = 0; i < 8; i++) {
+                        if (keybinds[i].is_joystick) {
+                            if (joy_connected && (joy.dwButtons & keybinds[i].code)) {
+                                nes_bus.controller[0] |= bitmasks[i];
+                            }
+                        } else {
+                            if (GetAsyncKeyState(keybinds[i].code) & 0x8000) {
+                                nes_bus.controller[0] |= bitmasks[i];
+                            }
+                        }
+                    }
                 }
             }
 
