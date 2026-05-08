@@ -1,6 +1,7 @@
 #include <iostream>
 #include <windows.h>
-#include <mmsystem.h> // Includes joyGetPosEx for USB Controllers
+#include <windowsx.h> 
+#include <mmsystem.h>
 #include <commdlg.h> 
 #include <string>
 #include <chrono>
@@ -20,6 +21,8 @@
 #define MENU_GAME_LOAD 1009
 #define MENU_GAME_KEYS 1006 
 #define MENU_GAME_FCEUX 1011 
+#define MENU_GAME_CONTROL_NONE 1012
+#define MENU_GAME_CONTROL_ZAPPER 1013
 #define MENU_CHEAT_GENIE 1004
 #define MENU_CHEAT_CLEAR 1005
 #define MENU_AUDIO_VOLUMES 1007 
@@ -27,13 +30,13 @@
 HWND hwnd;
 HDC hdc;
 BITMAPINFO bmi;
-HMENU hMenu, hSubMenuFile, hSubMenuGame, hSubMenuCheats, hSubMenuAudio;
+HMENU hMenu, hSubMenuFile, hSubMenuGame, hSubMenuControl, hSubMenuCheats, hSubMenuAudio;
 
 bool is_paused = false;
 
 struct InputBind {
     bool is_joystick;
-    int code; // VK_ keycode for keyboard OR button bitmask for joystick
+    int code;
 };
 
 InputBind keybinds[8] = {
@@ -168,20 +171,16 @@ std::string SelectROMDialog() {
 int current_key_mapping = 0;
 HWND hwndDialog = NULL;
 
-// Helper to format Key code as A, T, or 234 as you requested
 std::string GetBindName(InputBind bind) {
     if (bind.is_joystick) {
-        // Find which button number is pressed from the bitmask
         for (int i = 0; i < 32; i++) {
             if (bind.code & (1 << i)) return "Joy " + std::to_string(i + 1);
         }
         return "Joy";
     } else {
-        // If it's a real font character A-Z or 0-9
         if ((bind.code >= 'A' && bind.code <= 'Z') || (bind.code >= '0' && bind.code <= '9')) {
             return std::string(1, (char)bind.code);
         }
-        // Otherwise show the decimal ASCII code
         return std::to_string(bind.code);
     }
 }
@@ -191,11 +190,10 @@ LRESULT CALLBACK KeybindProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
         case WM_INITDIALOG:
             SetWindowText(hDlg, "Press key/button for A");
             current_key_mapping = 0;
-            SetTimer(hDlg, 1, 16, NULL); // Poll USB controller at ~60fps
+            SetTimer(hDlg, 1, 16, NULL);
             return TRUE;
             
         case WM_KEYDOWN:
-            // Keyboard Input
             keybinds[current_key_mapping] = {false, (int)wParam};
             current_key_mapping++;
             if (current_key_mapping >= 8) { 
@@ -207,19 +205,15 @@ LRESULT CALLBACK KeybindProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             return TRUE;
 
         case WM_TIMER: {
-            // Poll USB Controller (Joystick) Input
             JOYINFOEX joy;
             joy.dwSize = sizeof(joy);
             joy.dwFlags = JOY_RETURNBUTTONS;
             if (joyGetPosEx(JOYSTICKID1, &joy) == JOYERR_NOERROR) {
-                if (joy.dwButtons > 0) { // A button is pressed!
+                if (joy.dwButtons > 0) { 
                     keybinds[current_key_mapping] = {true, (int)joy.dwButtons};
-                    
-                    // Wait for button release so it doesn't instantly fill all 8 binds
                     while (joyGetPosEx(JOYSTICKID1, &joy) == JOYERR_NOERROR && joy.dwButtons > 0) {
                         Sleep(10); 
                     }
-
                     current_key_mapping++;
                     if (current_key_mapping >= 8) { 
                         DestroyWindow(hDlg); 
@@ -237,7 +231,6 @@ LRESULT CALLBACK KeybindProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             hwndDialog = NULL; 
             is_paused = false; 
             
-            // Print out the mapped controls nicely
             std::cout << "\n--- Current Controls ---\n";
             for(int i=0; i<8; i++) {
                 std::cout << keyNames[i] << " : " << GetBindName(keybinds[i]) << "\n";
@@ -260,6 +253,40 @@ void OpenKeybindWindow() {
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_ERASEBKGND: return 1; 
+        
+        case WM_MOUSEMOVE:
+            if (global_bus && global_bus->zapper_enabled) {
+                RECT clientRect; GetClientRect(hwnd, &clientRect);
+                int cw = clientRect.right - clientRect.left;
+                int ch = clientRect.bottom - clientRect.top;
+
+                int scale = std::max(1, std::min(cw / 256, ch / 240));
+                int target_w = 256 * scale;
+                int target_h = 240 * scale;
+
+                int offset_x = (cw - target_w) / 2;
+                int offset_y = (ch - target_h) / 2;
+
+                int mx = GET_X_LPARAM(lParam) - offset_x;
+                int my = GET_Y_LPARAM(lParam) - offset_y;
+
+                global_bus->zapper_x = mx / scale;
+                global_bus->zapper_y = my / scale;
+            }
+            break;
+
+        case WM_LBUTTONDOWN:
+            if (global_bus && global_bus->zapper_enabled) {
+                global_bus->zapper_trigger = true;
+            }
+            break;
+
+        case WM_LBUTTONUP:
+            if (global_bus && global_bus->zapper_enabled) {
+                global_bus->zapper_trigger = false;
+            }
+            break;
+
         case WM_COMMAND: 
             switch (LOWORD(wParam)) {
                 case MENU_FILE_OPEN: {
@@ -271,7 +298,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         global_cart = std::make_shared<Cartridge>(newRom);
                         if (global_cart->isLoaded()) {
                             global_bus->insertCartridge(global_cart); 
-                            // Standard boot is Accurate Mode
                             global_bus->cpu.fceux_mode = false;
                             CheckMenuItem(hMenu, MENU_GAME_FCEUX, MF_BYCOMMAND | MF_UNCHECKED);
                             global_bus->reset(true, false); 
@@ -289,7 +315,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     std::string fm2Path = SelectTASDialog();
                     if (!fm2Path.empty()) {
                         LoadFM2(fm2Path);
-                        // --- FORCE FCEUX MODE FOR TAS! ---
                         global_bus->cpu.fceux_mode = true;
                         CheckMenuItem(hMenu, MENU_GAME_FCEUX, MF_BYCOMMAND | MF_CHECKED);
                         global_bus->reset(true, true); 
@@ -320,6 +345,19 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     }
                     break;
                 case MENU_GAME_KEYS: OpenKeybindWindow(); break;
+                
+                case MENU_GAME_CONTROL_NONE:
+                    if (global_bus) global_bus->zapper_enabled = false;
+                    CheckMenuItem(hSubMenuControl, MENU_GAME_CONTROL_NONE, MF_BYCOMMAND | MF_CHECKED);
+                    CheckMenuItem(hSubMenuControl, MENU_GAME_CONTROL_ZAPPER, MF_BYCOMMAND | MF_UNCHECKED);
+                    break;
+
+                case MENU_GAME_CONTROL_ZAPPER:
+                    if (global_bus) global_bus->zapper_enabled = true;
+                    CheckMenuItem(hSubMenuControl, MENU_GAME_CONTROL_NONE, MF_BYCOMMAND | MF_UNCHECKED);
+                    CheckMenuItem(hSubMenuControl, MENU_GAME_CONTROL_ZAPPER, MF_BYCOMMAND | MF_CHECKED);
+                    break;
+
                 case MENU_GAME_SAVE: SaveState(); break;
                 case MENU_GAME_LOAD: LoadState(); break;
                 case MENU_CHEAT_GENIE:
@@ -377,6 +415,16 @@ void SetupWindow() {
     AppendMenu(hSubMenuGame, MF_STRING, MENU_GAME_KEYS, "Change Keybinds"); 
     AppendMenu(hSubMenuGame, MF_SEPARATOR, 0, NULL); 
     AppendMenu(hSubMenuGame, MF_STRING, MENU_GAME_FCEUX, "FCEUX TAS Mode"); 
+    
+    // Control Submenu
+    hSubMenuControl = CreatePopupMenu();
+    AppendMenu(hSubMenuControl, MF_STRING, MENU_GAME_CONTROL_NONE, "None (Gamepad 2)");
+    AppendMenu(hSubMenuControl, MF_STRING, MENU_GAME_CONTROL_ZAPPER, "Zapper Gun (Mouse)");
+    CheckMenuItem(hSubMenuControl, MENU_GAME_CONTROL_NONE, MF_BYCOMMAND | MF_CHECKED);
+    
+    AppendMenu(hSubMenuGame, MF_SEPARATOR, 0, NULL);
+    AppendMenu(hSubMenuGame, MF_STRING | MF_POPUP, (UINT_PTR)hSubMenuControl, "Control");
+    
     AppendMenu(hMenu, MF_STRING | MF_POPUP, (UINT_PTR)hSubMenuGame, "Game");
     
     // Cheats Menu
@@ -410,7 +458,7 @@ void SetupAudio() {
 }
 
 int main() {
-    srand(time(NULL)); // Seed the randomness for Real Hardware Mode!
+    srand(time(NULL)); 
 
     SetupWindow(); 
     SetupAudio();
@@ -447,7 +495,6 @@ int main() {
             
             if (tas_active) {
                 if (tas_frame < tas_inputs.size()) {
-                    // TAS Reset commands
                     if (tas_commands[tas_frame] & 0x02) { nes_bus.reset(true, true); } 
                     else if (tas_commands[tas_frame] & 0x01) { nes_bus.reset(false, true); }
                     
@@ -459,10 +506,11 @@ int main() {
                 }
             } else {
                 nes_bus.controller[0] = 0x00; 
-                nes_bus.controller[1] = 0x00;
+                if (!nes_bus.zapper_enabled) {
+                    nes_bus.controller[1] = 0x00;
+                }
                 
                 if (GetForegroundWindow() == hwnd) {
-                    // --- FPS FIX: Only poll USB if a joystick button is actually mapped! ---
                     bool needs_joystick = false;
                     for (int i = 0; i < 8; i++) {
                         if (keybinds[i].is_joystick) needs_joystick = true;
@@ -476,7 +524,6 @@ int main() {
                         joy_connected = (joyGetPosEx(JOYSTICKID1, &joy) == JOYERR_NOERROR);
                     }
 
-                    // Map 0=A, 1=B, 2=Select, 3=Start, 4=Up, 5=Down, 6=Left, 7=Right
                     uint8_t bitmasks[8] = {0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01};
 
                     for (int i = 0; i < 8; i++) {
