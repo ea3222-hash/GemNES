@@ -23,7 +23,6 @@ void Bus::reset(bool hard, bool fceux_mode) {
     if (cart) cart->reset(); 
     
     if (hard) {
-        // --- FIX: Exact NES Hardware Power-On RAM Pattern! ---
         for (int i = 0; i < 2048; i++) {
             cpuRam[i] = (i & 0x04) ? 0xFF : 0x00;
         }
@@ -47,17 +46,51 @@ uint8_t Bus::cpuRead(uint16_t addr, uint8_t current_open_bus) {
         return apu.cpuRead(addr, current_open_bus); 
     }
     else if (addr == 0x4016 || addr == 0x4017) {
-        // --- FIX: RMW Instructions will not incorrectly advance the shift register ---
         uint8_t index = addr & 0x0001;
-        data = (controller_state[index] & 0x80) > 0;
-        
-        if (strobe) {
-            controller_state[index] = controller[index];
+
+        if (index == 1 && zapper_enabled) {
+            // --- ZAPPER GUN ON PORT 2 ---
+            bool light_sensed = false;
+            
+            // Check a 5x5 pixel radius around the mouse pointer
+            if (zapper_x >= 0 && zapper_x < 256 && zapper_y >= 0 && zapper_y < 240) {
+                int radius = 2; 
+                for (int dy = -radius; dy <= radius && !light_sensed; dy++) {
+                    for (int dx = -radius; dx <= radius && !light_sensed; dx++) {
+                        int px = zapper_x + dx;
+                        int py = zapper_y + dy;
+                        if (px >= 0 && px < 256 && py >= 0 && py < 240) {
+                            // Extract RGB from the live PPU screen buffer
+                            uint32_t pixel = ppu.screen[py * 256 + px];
+                            uint8_t r = (pixel >> 16) & 0xFF;
+                            uint8_t g = (pixel >> 8) & 0xFF;
+                            uint8_t b = pixel & 0xFF;
+                            
+                            // If the pixel is bright (white target), light is detected
+                            if (r > 100 && g > 100 && b > 100) {
+                                light_sensed = true;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            uint8_t d3 = light_sensed ? 0x00 : 0x08;   // Bit 3: 0 = Light, 1 = Dark
+            uint8_t d4 = zapper_trigger ? 0x10 : 0x00; // Bit 4: 1 = Pulled, 0 = Released
+            
+            data = (current_open_bus & 0xE0) | d4 | d3;
+
         } else {
-            controller_state[index] <<= 1;
-            controller_state[index] |= 1; 
+            // --- STANDARD CONTROLLER ---
+            data = (controller_state[index] & 0x80) > 0;
+            if (strobe) {
+                controller_state[index] = controller[index];
+            } else {
+                controller_state[index] <<= 1;
+                controller_state[index] |= 1; 
+            }
+            data |= (current_open_bus & 0xE0); 
         }
-        data |= (current_open_bus & 0xE0); 
     }
     else if (addr >= 0x4000 && addr <= 0x5FFF) {
         return current_open_bus;
@@ -75,7 +108,6 @@ void Bus::cpuWrite(uint16_t addr, uint8_t data) {
     else if (addr == 0x4014) {
         uint16_t dma_page = data << 8;
         
-        // --- THE GOLDEN DMA LOOP ---
         int dummy_cycles = (cpu.total_cycles % 2 == 1) ? 2 : 1;
         for (int i = 0; i < dummy_cycles; i++) {
             uint8_t dummy_data = cpuRead(cpu.PC, cpu.open_bus); 
@@ -92,7 +124,6 @@ void Bus::cpuWrite(uint16_t addr, uint8_t data) {
             cpu.cycles++; 
             cpu.total_cycles++;
             
-            // --- FIX: Write formal OAM data onto the PPU Bus so It correctly catches the latch!
             ppu.cpuWrite(0x2004, dma_data);
             
             if (!cpu.fceux_mode) { ppu.step(); ppu.step(); ppu.step(); apu.step(); } 
@@ -104,7 +135,6 @@ void Bus::cpuWrite(uint16_t addr, uint8_t data) {
         apu.cpuWrite(addr, data);
     }
     else if (addr == 0x4016) {
-        // --- FIX: Strobe is treated as a continuous transparent latch ---
         strobe = data & 1;
         if (strobe) {
             controller_state[0] = controller[0];
