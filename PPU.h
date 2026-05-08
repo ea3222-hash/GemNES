@@ -27,6 +27,7 @@ public:
 
     uint8_t OAM[256];
     uint8_t oam_addr = 0x00;
+    uint8_t eval_oam_addr = 0x00;
 
 private:
     std::shared_ptr<Cartridge> cart;
@@ -39,7 +40,7 @@ private:
     int scanline = 0;
     int cycle = 0;
 
-    int latch_decay_timer = 0; // decay | NEW
+    int latch_decay_timer = 0;
 
     uint8_t status = 0x00;
     uint8_t control = 0x00;
