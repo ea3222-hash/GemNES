@@ -20,10 +20,8 @@ public:
 
     MIRROR mirror = HORIZONTAL; 
 
-    // --- NEW: MMC3 Scanline Counter & IRQ ---
     void scanline();
     bool irqState() const;
-
     void reset();
 
 private:
@@ -47,7 +45,7 @@ private:
     void MMC1_Write(uint16_t addr, uint8_t data);
     void Update_MMC1_Offsets();
 
-    // --- NEW: MMC3 (Mapper 4) Variables ---
+    // MMC3
     uint8_t mmc3_target_reg = 0;
     bool mmc3_prg_mode = false;
     bool mmc3_chr_mode = false;
