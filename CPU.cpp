@@ -36,6 +36,37 @@ void CPU::poll_nmi() {
 
 uint8_t CPU::read(uint16_t addr) { 
     cycle_count_this_inst++;
+    
+    // --- DMC DMA CYCLE STEALING ---
+    if (bus->apu.dmc.sample_buffer_empty && bus->apu.dmc.length_counter > 0) {
+        dma_stole_cycle = true;
+        dma_cycle_stolen = cycle_count_this_inst;
+        
+        // Halt for up to 4 cycles (dummy reads)
+        for (int i = 0; i < 4; i++) {
+            bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
+            cycles++; total_cycles++;
+        }
+        
+        // Fetch the DMC byte
+        bus->apu.dmc.sample_buffer = bus->cpuRead(bus->apu.dmc.current_address, open_bus);
+        bus->apu.dmc.sample_buffer_empty = false;
+        
+        bus->apu.dmc.current_address++;
+        if (bus->apu.dmc.current_address == 0) bus->apu.dmc.current_address = 0x8000;
+        
+        bus->apu.dmc.length_counter--;
+        if (bus->apu.dmc.length_counter == 0) {
+            if (bus->apu.dmc.loop) {
+                bus->apu.dmc.length_counter = bus->apu.dmc.reload_length;
+                bus->apu.dmc.current_address = bus->apu.dmc.sample_address;
+            } else if (bus->apu.dmc_irq_enable) {
+                bus->apu.dmc_irq = true;
+            }
+        }
+    }
+    // --- END DMC DMA ---
+
     uint8_t data = bus->cpuRead(addr, open_bus);
     if (addr != 0x4015) open_bus = data; 
     
@@ -47,7 +78,6 @@ uint8_t CPU::read(uint16_t addr) {
 }
 
 void CPU::write(uint16_t addr, uint8_t data) { 
-    // WRITES CANNOT BE HALTED BY DMA!
     cycle_count_this_inst++;
     open_bus = data;
     bus->cpuWrite(addr, data);
@@ -60,7 +90,6 @@ void CPU::write(uint16_t addr, uint8_t data) {
 }
 
 void CPU::dummy_write(uint16_t addr, uint8_t data) { 
-    // WRITES CANNOT BE HALTED BY DMA!
     cycle_count_this_inst++;
     open_bus = data;
     bus->cpuWrite(addr, data);
@@ -227,52 +256,58 @@ void CPU::AXS() { fetch(); uint16_t t = (A & X) - fetched; setFlag(C, (A & X) >=
 void CPU::SBC_U() { SBC(); } 
 
 void CPU::SHA() { 
-    // Data written includes A and X
     uint8_t val = A & X & ((base_hi + 1) & 0xFF); 
-    
     uint16_t target = addr_abs;
     if (page_crossed) {
-        // Address corruption ONLY leaks the X index register!
-        uint8_t target_hi = ((base_hi + 1) & 0xFF) & X;
+        uint8_t target_hi = ((base_hi + 1) & 0xFF) & A & X;
         target = (target_hi << 8) | (addr_abs & 0x00FF);
+    }
+    // QUIRK: If DMA steals cycle 3 or 4, it behaves like normal STA
+    if (dma_cycle_stolen == 3 || dma_cycle_stolen == 4) {
+        val = A & X; target = addr_abs;
     }
     write(target, val); 
 }
 
 void CPU::SHX() { 
     uint8_t val = X & ((base_hi + 1) & 0xFF); 
-    
     uint16_t target = addr_abs;
     if (page_crossed) {
-        // Address corruption ONLY leaks the X index register!
         uint8_t target_hi = ((base_hi + 1) & 0xFF) & X;
         target = (target_hi << 8) | (addr_abs & 0x00FF);
+    }
+    // QUIRK: If DMA steals cycle 3 or 4, it behaves like normal STX
+    if (dma_cycle_stolen == 3 || dma_cycle_stolen == 4) {
+        val = X; target = addr_abs;
     }
     write(target, val); 
 }
 
 void CPU::SHY() { 
     uint8_t val = Y & ((base_hi + 1) & 0xFF); 
-    
     uint16_t target = addr_abs;
     if (page_crossed) {
-        // SHY uses Y for indexing, so Y leaks onto the address bus!
         uint8_t target_hi = ((base_hi + 1) & 0xFF) & Y;
         target = (target_hi << 8) | (addr_abs & 0x00FF);
+    }
+    // QUIRK: If DMA steals cycle 3 or 4, it behaves like normal STY
+    if (dma_cycle_stolen == 3 || dma_cycle_stolen == 4) {
+        val = Y; target = addr_abs;
     }
     write(target, val); 
 }
 
 void CPU::SHS() { 
     SP = A & X; 
-    // Data written includes SP
     uint8_t val = SP & ((base_hi + 1) & 0xFF); 
-    
     uint16_t target = addr_abs;
     if (page_crossed) {
-        // Address corruption ONLY leaks the X index register!
         uint8_t target_hi = ((base_hi + 1) & 0xFF) & X;
         target = (target_hi << 8) | (addr_abs & 0x00FF);
+    }
+    // QUIRK: SP is still transferred, but behaves like normal STY writing SP
+    if (dma_cycle_stolen == 3 || dma_cycle_stolen == 4) {
+        val = SP; target = addr_abs;
     }
     write(target, val); 
 }
@@ -288,7 +323,6 @@ int CPU::step() {
         return cycles; 
     }
     
-    // The delay pipeline automatically shifting over
     if (nmi_delay) { 
         nmi_delay = false; 
         nmi_pending = true; 
@@ -304,6 +338,7 @@ int CPU::step() {
     nmi_edge_cycle = -1;
 
     dma_stole_cycle = false;
+    dma_cycle_stolen = -1; // Reset tracker
     
     current_opcode = read(PC++); 
     uint8_t opcode = current_opcode; 
