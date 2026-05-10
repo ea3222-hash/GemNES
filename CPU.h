@@ -28,6 +28,10 @@ public:
     int cycles;
     uint32_t total_cycles = 0; 
 
+    // --- DMA TIMING VARIABLES ---
+    bool dma_stole_cycle = false; 
+    int dma_cycle_stolen = -1;
+
 enum Flags {
         C = (1 << 0), Z = (1 << 1), I = (1 << 2), D = (1 << 3),
         V = (1 << 6), N = (1 << 7) 
@@ -40,9 +44,6 @@ enum Flags {
 
 private:
     Bus* bus = nullptr;
-
-    bool dma_stole_cycle = false; // NEW
-    void poll_dma(); // NEW
 
     uint8_t read(uint16_t addr);
     void write(uint16_t addr, uint8_t data);
@@ -65,7 +66,6 @@ private:
     bool page_crossed;
     bool is_write_instr[256];
     
-    // --- EXACT HARDWARE POLLING ---
     int cycle_count_this_inst = 0;
     int nmi_edge_cycle = -1;
     bool prev_nmi_line = false;
