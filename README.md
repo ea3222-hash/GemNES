@@ -192,5 +192,5 @@ FAIL 3 : Implied dummy reads\
 PASS : Branch dummy reads\
 PASS : JSR Edge cases\
 FAIL 1 : Internal data bus
-### Overall 98/139
+### Overall 102/139
 
