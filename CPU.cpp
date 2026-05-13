@@ -29,44 +29,16 @@ void CPU::poll_nmi() {
 
     bool current_nmi = bus->ppu.nmi_output;
     if (!prev_nmi_line && current_nmi) {
-        nmi_edge_cycle = cycle_count_this_inst;
+        // Latch the NMI edge exactly on the cycle it occurs
+        if (nmi_edge_cycle == -1) {
+            nmi_edge_cycle = cycle_count_this_inst;
+        }
     }
     prev_nmi_line = current_nmi;
 }
 
 uint8_t CPU::read(uint16_t addr) { 
     cycle_count_this_inst++;
-    
-    // --- DMC DMA CYCLE STEALING ---
-    if (bus->apu.dmc.sample_buffer_empty && bus->apu.dmc.length_counter > 0) {
-        dma_stole_cycle = true;
-        dma_cycle_stolen = cycle_count_this_inst;
-        
-        // Halt for up to 4 cycles (dummy reads)
-        for (int i = 0; i < 4; i++) {
-            bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
-            cycles++; total_cycles++;
-        }
-        
-        // Fetch the DMC byte
-        bus->apu.dmc.sample_buffer = bus->cpuRead(bus->apu.dmc.current_address, open_bus);
-        bus->apu.dmc.sample_buffer_empty = false;
-        
-        bus->apu.dmc.current_address++;
-        if (bus->apu.dmc.current_address == 0) bus->apu.dmc.current_address = 0x8000;
-        
-        bus->apu.dmc.length_counter--;
-        if (bus->apu.dmc.length_counter == 0) {
-            if (bus->apu.dmc.loop) {
-                bus->apu.dmc.length_counter = bus->apu.dmc.reload_length;
-                bus->apu.dmc.current_address = bus->apu.dmc.sample_address;
-            } else if (bus->apu.dmc_irq_enable) {
-                bus->apu.dmc_irq = true;
-            }
-        }
-    }
-    // --- END DMC DMA ---
-
     uint8_t data = bus->cpuRead(addr, open_bus);
     if (addr != 0x4015) open_bus = data; 
     
@@ -119,24 +91,69 @@ void CPU::reset() {
     nmi_pending = false; nmi_delay = false; irq_pending = false; prev_nmi_line = false;
 }
 
+// FIX: Interrupt sequences rewritten to exactly 7 cycles with Hijack support
 void CPU::nmi() {
-    read(PC); read(PC); 
-    push((PC >> 8) & 0x00FF); push(PC & 0x00FF);
+    read(PC); 
+    read(PC); 
+    push((PC >> 8) & 0x00FF); 
+    push(PC & 0x00FF);
     push((P | 0x20) & ~0x10); 
+    
     setFlag(I, true);
-    addr_abs = 0xFFFA;
-    uint16_t lo = read(addr_abs + 0); uint16_t hi = read(addr_abs + 1);
+    
+    uint16_t lo = read(0xFFFA);
+    uint16_t hi = read(0xFFFB);
     PC = (hi << 8) | lo;
+    
+    nmi_pending = false;
+    nmi_delay = false;
+    nmi_edge_cycle = -1;
 }
 
 void CPU::irq() {
-    read(PC);
-    push((PC >> 8) & 0x00FF); push(PC & 0x00FF);
+    read(PC); 
+    read(PC); 
+    push((PC >> 8) & 0x00FF); 
+    push(PC & 0x00FF);
     push((P | 0x20) & ~0x10); 
+    
+    // Check for NMI hijack at cycle 5!
+    bool hijack = (nmi_edge_cycle != -1) || nmi_pending || nmi_delay;
     setFlag(I, true);
-    addr_abs = 0xFFFE;
-    uint16_t lo = read(addr_abs + 0); uint16_t hi = read(addr_abs + 1);
+    
+    uint16_t vec = hijack ? 0xFFFA : 0xFFFE;
+    if (hijack) {
+        nmi_pending = false;
+        nmi_delay = false;
+        nmi_edge_cycle = -1; // Consumed by the hijack
+    }
+
+    uint16_t lo = read(vec);
+    uint16_t hi = read(vec + 1);
     PC = (hi << 8) | lo;
+}
+
+void CPU::BRK() { 
+    read(PC); 
+    PC++; 
+    push((PC >> 8) & 0x00FF); 
+    push(PC & 0x00FF); 
+    push(P | 0x30); 
+    
+    // Check for NMI hijack at cycle 5!
+    bool hijack = (nmi_edge_cycle != -1) || nmi_pending || nmi_delay;
+    setFlag(I, true); 
+    
+    uint16_t vec = hijack ? 0xFFFA : 0xFFFE;
+    if (hijack) {
+        nmi_pending = false;
+        nmi_delay = false;
+        nmi_edge_cycle = -1; // Consumed by the hijack
+    }
+
+    uint16_t lo = read(vec); 
+    uint16_t hi = read(vec + 1); 
+    PC = (hi << 8) | lo; 
 }
 
 void CPU::IMP() { fetched = A; read(PC); } 
@@ -187,7 +204,6 @@ void CPU::IZY() {
 
 void CPU::fetch() { fetched = read(addr_abs); }
 
-void CPU::BRK() { read(PC); PC++; push((PC >> 8) & 0x00FF); push(PC & 0x00FF); push(P | 0x30); setFlag(I, true); uint16_t lo = read(0xFFFE); uint16_t hi = read(0xFFFF); PC = (hi << 8) | lo; }
 void CPU::PHP() { read(PC); push(P | 0x30); } 
 void CPU::PLP() { read(PC); read(0x0100 + SP); P = (pop() & 0xEF) | 0x20; } 
 void CPU::RTI() { read(PC); read(0x0100 + SP); P = (pop() & 0xEF) | 0x20; uint16_t lo = pop(); uint16_t hi = pop(); PC = (hi << 8) | lo; }
@@ -255,68 +271,21 @@ void CPU::ARR() { fetch(); A &= fetched; uint16_t t = (A >> 1) | (getFlag(C) << 
 void CPU::AXS() { fetch(); uint16_t t = (A & X) - fetched; setFlag(C, (A & X) >= fetched); X = t & 0x00FF; updateZeroAndNegativeFlags(X); }
 void CPU::SBC_U() { SBC(); } 
 
-void CPU::SHA() { 
-    uint8_t val = A & X & ((base_hi + 1) & 0xFF); 
-    uint16_t target = addr_abs;
-    if (page_crossed) {
-        uint8_t target_hi = ((base_hi + 1) & 0xFF) & A & X;
-        target = (target_hi << 8) | (addr_abs & 0x00FF);
-    }
-    // QUIRK: If DMA steals cycle 3 or 4, it behaves like normal STA
-    if (dma_cycle_stolen == 3 || dma_cycle_stolen == 4) {
-        val = A & X; target = addr_abs;
-    }
-    write(target, val); 
-}
-
-void CPU::SHX() { 
-    uint8_t val = X & ((base_hi + 1) & 0xFF); 
-    uint16_t target = addr_abs;
-    if (page_crossed) {
-        uint8_t target_hi = ((base_hi + 1) & 0xFF) & X;
-        target = (target_hi << 8) | (addr_abs & 0x00FF);
-    }
-    // QUIRK: If DMA steals cycle 3 or 4, it behaves like normal STX
-    if (dma_cycle_stolen == 3 || dma_cycle_stolen == 4) {
-        val = X; target = addr_abs;
-    }
-    write(target, val); 
-}
-
-void CPU::SHY() { 
-    uint8_t val = Y & ((base_hi + 1) & 0xFF); 
-    uint16_t target = addr_abs;
-    if (page_crossed) {
-        uint8_t target_hi = ((base_hi + 1) & 0xFF) & Y;
-        target = (target_hi << 8) | (addr_abs & 0x00FF);
-    }
-    // QUIRK: If DMA steals cycle 3 or 4, it behaves like normal STY
-    if (dma_cycle_stolen == 3 || dma_cycle_stolen == 4) {
-        val = Y; target = addr_abs;
-    }
-    write(target, val); 
-}
-
-void CPU::SHS() { 
-    SP = A & X; 
-    uint8_t val = SP & ((base_hi + 1) & 0xFF); 
-    uint16_t target = addr_abs;
-    if (page_crossed) {
-        uint8_t target_hi = ((base_hi + 1) & 0xFF) & X;
-        target = (target_hi << 8) | (addr_abs & 0x00FF);
-    }
-    // QUIRK: SP is still transferred, but behaves like normal STY writing SP
-    if (dma_cycle_stolen == 3 || dma_cycle_stolen == 4) {
-        val = SP; target = addr_abs;
-    }
-    write(target, val); 
-}
+void CPU::SHA() { uint8_t val = A & X & ((base_hi + 1) & 0xFF); uint16_t target = addr_abs; if (page_crossed) { uint8_t target_hi = ((base_hi + 1) & 0xFF) & X; target = (target_hi << 8) | (addr_abs & 0x00FF); } write(target, val); }
+void CPU::SHX() { uint8_t val = X & ((base_hi + 1) & 0xFF); uint16_t target = addr_abs; if (page_crossed) { uint8_t target_hi = ((base_hi + 1) & 0xFF) & X; target = (target_hi << 8) | (addr_abs & 0x00FF); } write(target, val); }
+void CPU::SHY() { uint8_t val = Y & ((base_hi + 1) & 0xFF); uint16_t target = addr_abs; if (page_crossed) { uint8_t target_hi = ((base_hi + 1) & 0xFF) & Y; target = (target_hi << 8) | (addr_abs & 0x00FF); } write(target, val); }
+void CPU::SHS() { SP = A & X; uint8_t val = SP & ((base_hi + 1) & 0xFF); uint16_t target = addr_abs; if (page_crossed) { uint8_t target_hi = ((base_hi + 1) & 0xFF) & X; target = (target_hi << 8) | (addr_abs & 0x00FF); } write(target, val); }
 
 void CPU::LAE() { fetch(); uint8_t val = fetched & SP; A = val; X = val; SP = val; updateZeroAndNegativeFlags(A); }
 void CPU::ANE() { fetch(); A = (A | 0xEE) & X & fetched; updateZeroAndNegativeFlags(A); } 
 void CPU::LXA() { fetch(); A = (A | 0xEE) & fetched; X = A; updateZeroAndNegativeFlags(A); }
 
 int CPU::step() {
+    // FIX: Clear state immediately so that IRQ processes properly without state corruption
+    cycles = 0;
+    cycle_count_this_inst = 0;
+    nmi_edge_cycle = -1;
+
     if (nmi_pending) { 
         nmi_pending = false; 
         nmi(); 
@@ -332,13 +301,6 @@ int CPU::step() {
         irq(); 
         return cycles; 
     }
-    
-    cycles = 0;
-    cycle_count_this_inst = 0;
-    nmi_edge_cycle = -1;
-
-    dma_stole_cycle = false;
-    dma_cycle_stolen = -1; // Reset tracker
     
     current_opcode = read(PC++); 
     uint8_t opcode = current_opcode; 
@@ -422,10 +384,12 @@ int CPU::step() {
         default: read(PC); break;
     }
     
+    // Check if an NMI edge occurred at any point during this instruction
     if (nmi_edge_cycle != -1) {
         if (nmi_edge_cycle < cycle_count_this_inst) {
             nmi_pending = true;
         } else {
+            // NMI occurred exactly on the last dot of the instruction, so delay it
             nmi_delay = true;
         }
     }
