@@ -17,6 +17,13 @@ Mapper 66\
 Mapper 69\
 Mapper 90
 
+## Keybinds
+WASD\
+A button : K\
+B button : L\
+Start : I\
+SEelect : O
+
 ### CPU BEHAVIOR
 PASS : Rom is not writable\
 PASS : RAM Mirroring\
