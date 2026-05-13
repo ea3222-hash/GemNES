@@ -7,15 +7,16 @@ to compile you need G++ and run this command "g++ APU.cpp Bus.cpp Cartridge.cpp 
 <img width="768" height="768" alt="image" src="https://github.com/user-attachments/assets/33da8508-6041-4dd4-8d35-d7dca74ac6a5" />
 
 # Mappers Supported
-Mapper 1\
-Mapper 2\
-Mapper 3\
-Mapper 4\
-Mapper 7\
-Mapper 9\
-Mapper 66\
-Mapper 69\
-Mapper 90
+Mapper 1 (MMC1)\
+Mapper 2 (UxROM\
+Mapper 3 (CNROM)\
+Mapper 4 (MMC3)\
+Mapper 5 (MMC5) (Broken)\
+Mapper 7 (AOROM)\
+Mapper 9 (MMC2)\
+Mapper 66 (GxROM)\
+Mapper 69 (FME-7)\
+Mapper 90 (J.Y. Company ASIC)
 
 ## Keybinds
 WASD\
