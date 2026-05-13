@@ -70,15 +70,6 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
             if (!dmc_irq_enable) dmc_irq = false; 
             break;
             
-        case 0x4011:
-            dmc.output_level = data & 0x7F;
-            break;
-            
-        case 0x4012:
-            dmc.sample_address = 0xC000 | (data << 6);
-            dmc.current_address = dmc.sample_address;
-            break;
-
         case 0x4013:
             dmc.reload_length = (data * 16) + 1;
             break;
@@ -96,8 +87,7 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
                 dmc.enable = true;
                 if (dmc.length_counter == 0) {
                     dmc.length_counter = dmc.reload_length;
-                    dmc.current_address = dmc.sample_address;
-                    dmc.sample_buffer_empty = true; // Request a new DMA byte!
+                    dmc.bit_counter = 0;
                 }
             }
             dmc_irq = false; 
@@ -106,7 +96,10 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
         case 0x4017:
             delayed_frame_mode = (data & 0x80) >> 7;
             irq_inhibit = (data & 0x40) >> 6;
+            
+            // Writing to $4017 clears the Frame IRQ instantly
             irq_active = false; 
+            
             frame_counter_reset_delay = (clock_counter & 1) ? 4 : 3;
             break;
     }
@@ -120,9 +113,13 @@ uint8_t APU::cpuRead(uint16_t addr, uint8_t open_bus) {
         if (pulse2.length_counter > 0) data |= 0x02;
         if (triangle.length_counter > 0) data |= 0x04;
         if (noise.length_counter > 0) data |= 0x08;
+        
+        // --- FIX: DMC Bit 4 reflects the length counter exactly!
         if (dmc.length_counter > 0) data |= 0x10;
+        
         if (irq_active) data |= 0x40; 
         if (dmc_irq) data |= 0x80; 
+        
         irq_active = false; 
     }
     return data;
@@ -191,24 +188,18 @@ void APU::step() {
         dmc.timer--;
     } else {
         dmc.timer = dmc.timer_reload;
-        if (!dmc.silence_flag) {
-            if (dmc.shift_register & 0x01) {
-                if (dmc.output_level <= 125) dmc.output_level += 2;
-            } else {
-                if (dmc.output_level >= 2) dmc.output_level -= 2;
-            }
-        }
-        dmc.shift_register >>= 1;
-        
-        dmc.bit_counter++;
-        if (dmc.bit_counter >= 8) {
-            dmc.bit_counter = 0;
-            if (!dmc.sample_buffer_empty) {
-                dmc.silence_flag = false;
-                dmc.shift_register = dmc.sample_buffer;
-                dmc.sample_buffer_empty = true; 
-            } else {
-                dmc.silence_flag = true;
+        if (dmc.length_counter > 0) {
+            dmc.bit_counter++;
+            if (dmc.bit_counter >= 8) {
+                dmc.bit_counter = 0;
+                dmc.length_counter--;
+                if (dmc.length_counter == 0) {
+                    if (dmc.loop) {
+                        dmc.length_counter = dmc.reload_length;
+                    } else if (dmc_irq_enable) {
+                        dmc_irq = true; 
+                    }
+                }
             }
         }
     }
@@ -258,9 +249,8 @@ double APU::getOutputSample() {
     }
     
     double tnd_out = 0.0;
-    double d = dmc.output_level; 
-    if (t + n + d > 0.0) {
-        tnd_out = 159.79 / ((1.0 / ((t / 8227.0) + (n / 12241.0) + (d / 22638.0))) + 100.0);
+    if (t + n > 0.0) {
+        tnd_out = 159.79 / ((1.0 / ((t / 8227.0) + (n / 12241.0))) + 100.0);
     }
 
     return pulse_out + tnd_out;
