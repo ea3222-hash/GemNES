@@ -32,7 +32,7 @@ private:
 
     std::vector<uint8_t> prg_memory;
     std::vector<uint8_t> chr_memory;
-    uint8_t prg_ram[8192]; 
+    uint8_t prg_ram[131072]; 
 
     // MMC1
     uint8_t load_register = 0x00;
@@ -59,6 +59,44 @@ private:
     bool irq_active = false;
     void MMC3_Write(uint16_t addr, uint8_t data);
     void Update_MMC3_Offsets();
+
+    // MMC5
+    uint8_t mmc5_prg_mode = 3;
+    uint8_t mmc5_chr_mode = 0;
+    uint8_t mmc5_exram_mode = 0;
+    uint8_t mmc5_nt_mapping = 0;
+    uint8_t mmc5_fill_tile = 0;
+    uint8_t mmc5_fill_color = 0;
+    uint8_t mmc5_prg_ram_bank = 0;
+    uint8_t mmc5_ram_protect1 = 0;
+    uint8_t mmc5_ram_protect2 = 0;
+    
+    bool mmc5_8x16_mode = false;
+    bool mmc5_in_frame = false;
+    int mmc5_ppu_reads = 0;
+    int mmc5_cpu_reads = 0;
+    int mmc5_sprite_fetches = 0;
+    uint8_t mmc5_last_exram = 0;
+    
+    uint8_t mmc5_exram[1024];
+    uint8_t mmc5_ciram[2048]; 
+    uint8_t mmc5_mult_a = 0;
+    uint8_t mmc5_mult_b = 0;
+    uint8_t mmc5_prg_banks[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+    uint16_t mmc5_chr_banks_A[8] = {0};
+    uint16_t mmc5_chr_banks_B[4] = {0};
+    uint8_t mmc5_chr_high_bits = 0;
+    
+    uint32_t mmc5_prg_offsets[4] = {0};
+    bool mmc5_prg_is_ram[4] = {false, false, false, false};
+    uint32_t mmc5_chr_offsets_A[8] = {0};
+    uint32_t mmc5_chr_offsets_B[4] = {0};
+    
+    uint8_t mmc5_irq_scanline = 0;
+    bool mmc5_irq_enable = false;
+    int mmc5_irq_counter = 0;
+    void Update_MMC5_PRG();
+    void Update_MMC5_CHR();
 
     // Mapper 69 (Sunsoft FME-7)
     uint8_t fme7_command = 0;
