@@ -34,7 +34,7 @@ private:
 
     uint8_t nameTable[2][1024]; 
     uint8_t paletteTable[32];   
-    uint8_t ppuRead(uint16_t addr);
+    uint8_t ppuRead(uint16_t addr, bool is_sprite = false);
     void ppuWrite(uint16_t addr, uint8_t data);
 
     int scanline = 0;
@@ -56,6 +56,8 @@ private:
 
     bool vblank_suppress = false; 
     bool is_odd_frame = false;
+    bool oam_eval_done = false;
+    bool rendering_enabled_at_339 = false;
 
     uint8_t bg_next_tile_id = 0x00, bg_next_tile_attrib = 0x00, bg_next_tile_lsb = 0x00, bg_next_tile_msb = 0x00;
     uint16_t bg_shifter_pattern_lo = 0x0000, bg_shifter_pattern_hi = 0x0000, bg_shifter_attrib_lo = 0x0000, bg_shifter_attrib_hi = 0x0000;
