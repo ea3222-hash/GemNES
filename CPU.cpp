@@ -38,6 +38,7 @@ void CPU::poll_nmi() {
 }
 
 uint8_t CPU::read(uint16_t addr) { 
+    poll_dma(addr);
     cycle_count_this_inst++;
     uint8_t data = bus->cpuRead(addr, open_bus);
     if (addr != 0x4015) open_bus = data; 
@@ -46,7 +47,12 @@ uint8_t CPU::read(uint16_t addr) {
     poll_nmi();
     irq_pending = (bus->cart && bus->cart->irqState());
     
-    cycles++; total_cycles++; return data; 
+    cycles++; total_cycles++; 
+    
+    // FIX: Execute DMA *after* the read so the DMC byte lingers on the open bus!
+    poll_dma(addr); 
+    
+    return data; 
 }
 
 void CPU::write(uint16_t addr, uint8_t data) { 
@@ -59,6 +65,7 @@ void CPU::write(uint16_t addr, uint8_t data) {
     irq_pending = (bus->cart && bus->cart->irqState());
     
     cycles++; total_cycles++; 
+    // No poll_dma here, CPU ignores DMA during writes!
 }
 
 void CPU::dummy_write(uint16_t addr, uint8_t data) { 
@@ -71,6 +78,7 @@ void CPU::dummy_write(uint16_t addr, uint8_t data) {
     irq_pending = (bus->cart && bus->cart->irqState());
     
     cycles++; total_cycles++; 
+    // No poll_dma here, CPU ignores DMA during writes!
 }
 
 void CPU::setFlag(Flags flag, bool value) { if (value) P |= flag; else P &= ~flag; }
@@ -135,7 +143,7 @@ void CPU::irq() {
 
 void CPU::BRK() { 
     read(PC); 
-    PC++; 
+    PC++;
     push((PC >> 8) & 0x00FF); 
     push(PC & 0x00FF); 
     push(P | 0x30); 
@@ -201,7 +209,6 @@ void CPU::IZY() {
     page_crossed = (addr_abs & 0xFF00) != (hi << 8);
     if (page_crossed || is_write_instr[current_opcode]) read(addr_dummy); 
 }
-
 void CPU::fetch() { fetched = read(addr_abs); }
 
 void CPU::PHP() { read(PC); push(P | 0x30); } 
@@ -271,14 +278,73 @@ void CPU::ARR() { fetch(); A &= fetched; uint16_t t = (A >> 1) | (getFlag(C) << 
 void CPU::AXS() { fetch(); uint16_t t = (A & X) - fetched; setFlag(C, (A & X) >= fetched); X = t & 0x00FF; updateZeroAndNegativeFlags(X); }
 void CPU::SBC_U() { SBC(); } 
 
-void CPU::SHA() { uint8_t val = A & X & ((base_hi + 1) & 0xFF); uint16_t target = addr_abs; if (page_crossed) { uint8_t target_hi = ((base_hi + 1) & 0xFF) & X; target = (target_hi << 8) | (addr_abs & 0x00FF); } write(target, val); }
-void CPU::SHX() { uint8_t val = X & ((base_hi + 1) & 0xFF); uint16_t target = addr_abs; if (page_crossed) { uint8_t target_hi = ((base_hi + 1) & 0xFF) & X; target = (target_hi << 8) | (addr_abs & 0x00FF); } write(target, val); }
-void CPU::SHY() { uint8_t val = Y & ((base_hi + 1) & 0xFF); uint16_t target = addr_abs; if (page_crossed) { uint8_t target_hi = ((base_hi + 1) & 0xFF) & Y; target = (target_hi << 8) | (addr_abs & 0x00FF); } write(target, val); }
-void CPU::SHS() { SP = A & X; uint8_t val = SP & ((base_hi + 1) & 0xFF); uint16_t target = addr_abs; if (page_crossed) { uint8_t target_hi = ((base_hi + 1) & 0xFF) & X; target = (target_hi << 8) | (addr_abs & 0x00FF); } write(target, val); }
+
+void CPU::SHA() {
+    uint8_t val = A & X & ((addr_dummy >> 8) + 1); 
+    uint16_t target = page_crossed ? ((val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
+    write(target, val); 
+}
+void CPU::SHX() {
+    uint8_t val = X & ((addr_dummy >> 8) + 1); 
+    uint16_t target = page_crossed ? ((val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
+    write(target, val); 
+}
+void CPU::SHY() {
+    uint8_t val = Y & ((addr_dummy >> 8) + 1); 
+    uint16_t target = page_crossed ? ((val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
+    write(target, val); 
+}
+void CPU::SHS() { 
+    SP = A & X;
+    uint8_t val = SP & ((addr_dummy >> 8) + 1); 
+    uint16_t target = page_crossed ? ((val << 8) | (addr_abs & 0x00FF)) : addr_abs; 
+    write(target, val); 
+}
 
 void CPU::LAE() { fetch(); uint8_t val = fetched & SP; A = val; X = val; SP = val; updateZeroAndNegativeFlags(A); }
-void CPU::ANE() { fetch(); A = (A | 0xEE) & X & fetched; updateZeroAndNegativeFlags(A); } 
-void CPU::LXA() { fetch(); A = (A | 0xEE) & fetched; X = A; updateZeroAndNegativeFlags(A); }
+void CPU::ANE() { fetch(); A = (A | 0xFF) & X & fetched; updateZeroAndNegativeFlags(A); }     // 0xFF magic constant
+void CPU::LXA() { fetch(); A = (A | 0xFF) & fetched; X = A; updateZeroAndNegativeFlags(A); } // 0xFF magic constant, blargg test doesnt like (0xEE)
+
+void CPU::poll_dma(uint16_t addr) {
+    if (bus->apu.dmc.dma_pending) {
+        bus->apu.dmc.dma_pending = false;
+        
+        // FIX: Restore 3 or 4 cycle variable timing to stop random PPU desyncs!
+        int dma_cycles = (total_cycles % 2 == 1) ? 3 : 4;
+        
+        for (int i = 0; i < dma_cycles; i++) {
+            if (i == dma_cycles - 2) {
+                // Dummy read intentionally left unblocked to allow the hardware $4016 glitch!
+                open_bus = bus->cpuRead(addr, open_bus); 
+            } else if (i == dma_cycles - 1) {
+                // Audio sample fetch
+                uint8_t dmc_data = bus->cpuRead(bus->apu.dmc.current_address, open_bus);
+                open_bus = dmc_data;
+                bus->apu.dmc.sample_buffer = dmc_data;
+                bus->apu.dmc.buffer_empty = false;
+                
+                if (bus->apu.dmc.current_address == 0xFFFF) bus->apu.dmc.current_address = 0x8000;
+                else bus->apu.dmc.current_address++;
+                
+                if (bus->apu.dmc.length_counter > 0) {
+                    bus->apu.dmc.length_counter--;
+                    if (bus->apu.dmc.length_counter == 0) {
+                        if (bus->apu.dmc.loop) {
+                            bus->apu.dmc.length_counter = bus->apu.dmc.reload_length;
+                            bus->apu.dmc.current_address = bus->apu.dmc.sample_address;
+                        } else if (bus->apu.dmc_irq_enable) {
+                            bus->apu.dmc_irq = true; 
+                        }
+                    }
+                }
+            }
+            
+            bus->ppu.step(); bus->ppu.step(); bus->ppu.step(); bus->apu.step();
+            poll_nmi();
+            cycles++; total_cycles++;
+        }
+    }
+}
 
 int CPU::step() {
     // FIX: Clear state immediately so that IRQ processes properly without state corruption
@@ -383,7 +449,6 @@ int CPU::step() {
 
         default: read(PC); break;
     }
-    
     // Check if an NMI edge occurred at any point during this instruction
     if (nmi_edge_cycle != -1) {
         if (nmi_edge_cycle < cycle_count_this_inst) {
