@@ -69,12 +69,14 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
             dmc.timer_reload = dmc_rate_table[data & 0x0F];
             if (!dmc_irq_enable) dmc_irq = false; 
             break;
+
+        case 0x4012: dmc.sample_address = 0xC000 | (data << 6); break;
             
         case 0x4013:
             dmc.reload_length = (data * 16) + 1;
             break;
 
-         case 0x4015:
+        case 0x4015:
             pulse1.enable = data & 0x01; if (!pulse1.enable) pulse1.length_counter = 0;
             pulse2.enable = data & 0x02; if (!pulse2.enable) pulse2.length_counter = 0;
             triangle.enable = data & 0x04; if (!triangle.enable) triangle.length_counter = 0;
@@ -87,20 +89,21 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
                 dmc.enable = true;
                 if (dmc.length_counter == 0) {
                     dmc.length_counter = dmc.reload_length;
-                    dmc.bit_counter = 0;
+                    dmc.current_address = dmc.sample_address;
+                    dmc.buffer_empty = true; // Buffer empty triggers DMA
                 }
             }
             dmc_irq = false; 
             break;
             
         case 0x4017:
-            delayed_frame_mode = (data & 0x80) >> 7;
+            frame_mode = (data & 0x80) >> 7;
             irq_inhibit = (data & 0x40) >> 6;
+            if (irq_inhibit) irq_active = false;
             
-            // Writing to $4017 clears the Frame IRQ instantly
-            irq_active = false; 
-            
-            frame_counter_reset_delay = (clock_counter & 1) ? 4 : 3;
+            // FIX: Parity swapped to 3 : 4 to fix "Early" clocking!
+            frame_counter_reset_delay = (clock_counter % 2 == 0) ? 3 : 4;
+            delayed_frame_mode = frame_mode;
             break;
     }
 }
@@ -113,14 +116,13 @@ uint8_t APU::cpuRead(uint16_t addr, uint8_t open_bus) {
         if (pulse2.length_counter > 0) data |= 0x02;
         if (triangle.length_counter > 0) data |= 0x04;
         if (noise.length_counter > 0) data |= 0x08;
-        
-        // --- FIX: DMC Bit 4 reflects the length counter exactly!
         if (dmc.length_counter > 0) data |= 0x10;
         
         if (irq_active) data |= 0x40; 
         if (dmc_irq) data |= 0x80; 
         
-        irq_active = false; 
+        irq_active = false; // Clears Frame IRQ
+        dmc_irq = false;    // <--- NEW FIX: Reading $4015 also clears DMC IRQ!
     }
     return data;
 }
@@ -152,6 +154,7 @@ void APU::clock_lengths() {
 }
 
 void APU::step() {
+    // 1. Frame Counter Delay
     if (frame_counter_reset_delay > 0) {
         frame_counter_reset_delay--;
         if (frame_counter_reset_delay == 0) {
@@ -188,20 +191,15 @@ void APU::step() {
         dmc.timer--;
     } else {
         dmc.timer = dmc.timer_reload;
-        if (dmc.length_counter > 0) {
-            dmc.bit_counter++;
-            if (dmc.bit_counter >= 8) {
-                dmc.bit_counter = 0;
-                dmc.length_counter--;
-                if (dmc.length_counter == 0) {
-                    if (dmc.loop) {
-                        dmc.length_counter = dmc.reload_length;
-                    } else if (dmc_irq_enable) {
-                        dmc_irq = true; 
-                    }
-                }
-            }
+        dmc.bit_counter++;
+        if (dmc.bit_counter >= 8) {
+            dmc.bit_counter = 0;
+            dmc.buffer_empty = true; // Output shift register consumed the buffer!
         }
+    }
+
+    if (dmc.buffer_empty && dmc.length_counter > 0 && !dmc.dma_pending) {
+        dmc.dma_pending = true;
     }
 
     frame_counter++;
