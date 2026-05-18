@@ -31,6 +31,13 @@ struct DMCChannel {
     uint16_t timer_reload = 428;
     uint8_t bit_counter = 0;
     bool loop = false;
+    
+    // --- NEW DMA VARIABLES ---
+    uint16_t sample_address = 0xC000;
+    uint16_t current_address = 0xC000;
+    uint8_t sample_buffer = 0;
+    bool buffer_empty = true;
+    bool dma_pending = false;
 };
 
 class APU {
@@ -54,12 +61,13 @@ public:
     float vol_triangle = 50.0f;
     float vol_noise = 50.0f;
 
+    DMCChannel dmc;
+
 private:
     PulseChannel pulse1;
     PulseChannel pulse2;
     TriangleChannel triangle;
-    NoiseChannel noise;       
-    DMCChannel dmc; 
+    NoiseChannel noise;
 
     uint32_t clock_counter = 0;
     uint32_t frame_counter = 0;
