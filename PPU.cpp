@@ -38,63 +38,39 @@ void PPU::reset(bool fceux_mode) {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x21, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00
         };
-        for (int i = 0; i < 32; i++) {
-            paletteTable[i] = pal_power_on[i];
-        }
+        for (int i = 0; i < 32; i++) paletteTable[i] = pal_power_on[i];
     }
     
     scanline = 0; cycle = 0;
     status = 0x00; control = 0x00; mask = 0x00; 
     ppu_data_buffer = 0x00; ppu_data_latch = 0x00;
     v = 0; t = 0; x = 0; w = 0;
-    vblank_suppress = false; is_odd_frame = false;
+    vblank_suppress = false; is_odd_frame = false; oam_eval_done = false;
     frame_complete = false; nmi_output = false; nmi = false;
     nmi_edge_latched = false; nmi_suppressed = false;
 }
 
-void PPU::update_nmi() {
-    nmi_output = (status & 0x80) && (control & 0x80);
-}
+void PPU::update_nmi() { nmi_output = (status & 0x80) && (control & 0x80); }
 
 uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
     uint8_t data = ppu_data_latch; 
-    
     switch (addr & 0x0007) {
         case 0x0002: {
             data = (status & 0xE0) | (ppu_data_latch & 0x1F);
             if (scanline == 241) {
-                if (cycle == 0) { 
-                    vblank_suppress = true; 
-                    data &= ~0x80; 
-                    nmi_suppressed = true; 
-                } 
-                else if (cycle == 1 || cycle == 2) {
-                    vblank_suppress = true; 
-                    data |= 0x80; 
-                    nmi_suppressed = true; 
-                }
+                if (cycle == 0) { vblank_suppress = true; data &= ~0x80; nmi_suppressed = true; } 
+                else if (cycle == 1 || cycle == 2) { vblank_suppress = true; data |= 0x80; nmi_suppressed = true; }
             }
-            if (scanline == -1 && cycle == 1) {
-                data &= ~0x80; 
-            }
-            status &= ~0x80; 
-            w = 0;           
-            update_nmi();
+            if (scanline == -1 && cycle == 1) data &= ~0x80; 
+            status &= ~0x80; w = 0; update_nmi();
             break;
         }
-            
         case 0x0004:
             data = OAM[oam_addr];
-            if ((oam_addr & 0x03) == 0x02) {
-                data &= 0xE3; 
-            }
-            if ((mask & 0x18) && (scanline >= -1 && scanline < 240)) {
-                oam_addr += 4; 
-            } else {
-                OAM[oam_addr++] = data; 
-            }
+            if ((oam_addr & 0x03) == 0x02) data &= 0xE3; 
+            if ((mask & 0x18) && (scanline >= -1 && scanline < 240)) oam_addr += 4; 
+            else OAM[oam_addr++] = data; 
             break;
-            
         case 0x0007:
             data = ppu_data_buffer;
             ppu_data_buffer = ppuRead(v);
@@ -109,13 +85,10 @@ uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
                 if ((v & 0x7000) != 0x7000) { v += 0x1000; }
                 else {
                     v &= ~0x7000; int y = (v & 0x03E0) >> 5;
-                    if (y == 29) { y = 0; v ^= 0x0800; }
-                    else if (y == 31) { y = 0; } else { y++; }
+                    if (y == 29) { y = 0; v ^= 0x0800; } else if (y == 31) { y = 0; } else { y++; }
                     v = (v & ~0x03E0) | (y << 5);
                 }
-            } else { 
-                v += (control & 0x04) ? 32 : 1; 
-            }
+            } else { v += (control & 0x04) ? 32 : 1; }
             break;
     }
     ppu_data_latch = data;
@@ -125,7 +98,6 @@ uint8_t PPU::cpuRead(uint16_t addr, uint8_t open_bus) {
 
 void PPU::cpuWrite(uint16_t addr, uint8_t data) {
     ppu_data_latch = data; 
-
     switch (addr & 0x0007) {
         case 0x0000: control = data; t = (t & 0xF3FF) | ((data & 0x03) << 10); update_nmi(); break;
         case 0x0001: mask = data; break;
@@ -148,23 +120,20 @@ void PPU::cpuWrite(uint16_t addr, uint8_t data) {
                 if ((v & 0x7000) != 0x7000) { v += 0x1000; }
                 else {
                     v &= ~0x7000; int y = (v & 0x03E0) >> 5;
-                    if (y == 29) { y = 0; v ^= 0x0800; }
-                    else if (y == 31) { y = 0; } else { y++; }
+                    if (y == 29) { y = 0; v ^= 0x0800; } else if (y == 31) { y = 0; } else { y++; }
                     v = (v & ~0x03E0) | (y << 5);
                 }
-            } else { 
-                v += (control & 0x04) ? 32 : 1; 
-            }
+            } else { v += (control & 0x04) ? 32 : 1; }
             latch_decay_timer = 3000000;
             break;
     }
 }
 
-uint8_t PPU::ppuRead(uint16_t addr) {
+uint8_t PPU::ppuRead(uint16_t addr, bool is_sprite) {
     addr &= 0x3FFF;
     uint8_t data = 0x00;
 
-    if (cart->ppuRead(addr, data)) {} 
+    if (cart->ppuRead(addr, data, is_sprite)) {}
     else if (addr >= 0x2000 && addr <= 0x3EFF) {
         addr &= 0x0FFF;
         if (cart->mirror == VERTICAL) {
@@ -182,10 +151,8 @@ uint8_t PPU::ppuRead(uint16_t addr) {
     } 
     else if (addr >= 0x3F00 && addr <= 0x3FFF) {
         addr &= 0x001F;
-        if (addr == 0x10) addr = 0x00;
-        else if (addr == 0x14) addr = 0x04;
-        else if (addr == 0x18) addr = 0x08;
-        else if (addr == 0x1C) addr = 0x0C;
+        if (addr == 0x10) addr = 0x00; else if (addr == 0x14) addr = 0x04;
+        else if (addr == 0x18) addr = 0x08; else if (addr == 0x1C) addr = 0x0C;
         data = paletteTable[addr] & 0x3F;
         if (mask & 0x01) data &= 0x30; 
     }
@@ -212,10 +179,8 @@ void PPU::ppuWrite(uint16_t addr, uint8_t data) {
     } 
     else if (addr >= 0x3F00 && addr <= 0x3FFF) {
         addr &= 0x001F;
-        if (addr == 0x10) addr = 0x00;
-        else if (addr == 0x14) addr = 0x04;
-        else if (addr == 0x18) addr = 0x08;
-        else if (addr == 0x1C) addr = 0x0C;
+        if (addr == 0x10) addr = 0x00; else if (addr == 0x14) addr = 0x04;
+        else if (addr == 0x18) addr = 0x08; else if (addr == 0x1C) addr = 0x0C;
         paletteTable[addr] = data & 0x3F; 
     }
 }
@@ -227,15 +192,15 @@ void PPU::step() {
         if (scanline == -1 && cycle == 1) { status &= ~0xE0; update_nmi(); }
         if (scanline == -1 && cycle == 339 && is_odd_frame && rendering_enabled) cycle++; 
 
+        // 1. BG Serial In (White Column) & Stale BG Shifts
         if ((cycle >= 1 && cycle <= 256) || (cycle >= 321 && cycle <= 336)) {
             if (rendering_enabled) {
-                // FIX: BG Serial in. Shift registers bring in a 1.
+                // Background patterns pull in 1, attributes pull in 0 (Creates Palette 0, Color 3: White)
                 bg_shifter_pattern_lo = (bg_shifter_pattern_lo << 1) | 1;
                 bg_shifter_pattern_hi = (bg_shifter_pattern_hi << 1) | 1;
-                bg_shifter_attrib_lo  = (bg_shifter_attrib_lo << 1) | 1;  
-                bg_shifter_attrib_hi  = (bg_shifter_attrib_hi << 1) | 1;
-            
-                // FIX: Stale BG Shift Registers. Fetch and reload only if rendering is active.
+                bg_shifter_attrib_lo  = (bg_shifter_attrib_lo << 1); 
+                bg_shifter_attrib_hi  = (bg_shifter_attrib_hi << 1); 
+                
                 switch ((cycle - 1) % 8) {
                     case 0: 
                         bg_shifter_pattern_lo = (bg_shifter_pattern_lo & 0xFF00) | bg_next_tile_lsb;
@@ -286,10 +251,15 @@ void PPU::step() {
             }
         }
 
-        // FIX: Sprites on scanline 0. OAM evaluation strictly requires rendering enabled.
+        // 2. Sprites on scanline 0. oam_eval_done locks in stale data.
+        if (cycle == 256 && scanline >= -1 && scanline < 240) {
+            oam_eval_done = rendering_enabled; 
+        }
+
         if (cycle == 257 && scanline >= -1 && scanline < 240) {
-            if (rendering_enabled) {
-                oam_addr = 0; 
+            if (rendering_enabled) oam_addr = 0; 
+            
+            if (oam_eval_done) {
                 memset(spriteScanline, 0xFF, sizeof(spriteScanline));
                 sprite_count = 0;
                 int spriteSize = (control & 0x20) ? 16 : 8; 
@@ -320,21 +290,20 @@ void PPU::step() {
             }
         }
 
-        // FIX: Stale Sprite Shift Registers. Treat X as 0 if rendering was disabled, and skip pattern fetch!
+        // 3. Stale Sprite Shift Regs & dot 340 rendering disabled quirks
         if (cycle == 340 && scanline >= -1 && scanline < 240) {
             int safe_sprite_count = std::min((int)sprite_count, 8);
-            int eval_y = (scanline == -1) ? 255 : scanline;
-
             for (int i = 0; i < safe_sprite_count; i++) {
                 if (!rendering_enabled) {
-                    spriteScanline[i].x = 0; 
+                    spriteScanline[i].x = 0; // Forced to 0! Shifts immediately next scanline
+                    // Do NOT clear or reload pattern registers. Keep them stale!
                 } else {
                     uint8_t sprite_pattern_bits_lo, sprite_pattern_bits_hi;
                     uint16_t sprite_pattern_addr_lo, sprite_pattern_addr_hi;
                     bool flip_v = spriteScanline[i].attribute & 0x80;
                     bool flip_h = spriteScanline[i].attribute & 0x40;
 
-                    int diff = eval_y - spriteScanline[i].y;
+                    int diff = (scanline == -1 ? 255 : scanline) - spriteScanline[i].y;
                     if (diff < 0 || diff > 15) diff = 0; 
 
                     if (!(control & 0x20)) { 
@@ -355,8 +324,10 @@ void PPU::step() {
                     }
 
                     sprite_pattern_addr_hi = sprite_pattern_addr_lo + 8;
-                    sprite_pattern_bits_lo = ppuRead(sprite_pattern_addr_lo);
-                    sprite_pattern_bits_hi = ppuRead(sprite_pattern_addr_hi);
+                    
+                    // PASS TRUE HERE to tell the Cartridge this is a sprite fetch!
+                    sprite_pattern_bits_lo = ppuRead(sprite_pattern_addr_lo, true);
+                    sprite_pattern_bits_hi = ppuRead(sprite_pattern_addr_hi, true);
 
                     if (flip_h) {
                         auto flipbyte = [](uint8_t b) {
@@ -447,7 +418,8 @@ void PPU::step() {
         
         screen[scanline * 256 + (cycle - 1)] = palScreen[color_index];
 
-        if (rendering_enabled) {
+        // 3. (Continued) Sprite Shifting STOPS completely outside cycle 1-256 OR if rendering is disabled!
+        if (rendering_enabled && cycle >= 1 && cycle <= 256) {
             int safe_sprite_count = std::min((int)sprite_count, 8); 
             for (int i = 0; i < safe_sprite_count; i++) {
                 if (spriteScanline[i].x > 0) spriteScanline[i].x--;
@@ -460,9 +432,7 @@ void PPU::step() {
     }
     if (latch_decay_timer > 0) {
         latch_decay_timer--;
-        if (latch_decay_timer == 0) {
-            ppu_data_latch = 0x00;
-        }
+        if (latch_decay_timer == 0) ppu_data_latch = 0x00;
     }
 
     cycle++;
