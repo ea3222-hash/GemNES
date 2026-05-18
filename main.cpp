@@ -26,6 +26,9 @@
 #define MENU_CHEAT_GENIE 1004
 #define MENU_CHEAT_CLEAR 1005
 #define MENU_AUDIO_VOLUMES 1007 
+#define MENU_FILE_ROM_INFO 1014
+#define MENU_FILE_SAVE_SRAM 1015
+#define MENU_FILE_LOAD_SRAM 1016
 
 HWND hwnd;
 HDC hdc;
@@ -324,6 +327,45 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     } else { is_paused = was_paused; }
                     break;
                 }
+                case MENU_FILE_SAVE_SRAM: {
+                    if (global_cart && global_cart->isLoaded()) {
+                        bool was_paused = is_paused; is_paused = true;
+                        char filename[MAX_PATH] = "";
+                        OPENFILENAMEA ofn; ZeroMemory(&ofn, sizeof(ofn));
+                        ofn.lStructSize = sizeof(ofn); ofn.hwndOwner = hwnd;
+                        ofn.lpstrFilter = "Save RAM (*.sav)\0*.sav\0All Files (*.*)\0*.*\0";
+                        ofn.lpstrFile = filename; ofn.nMaxFile = MAX_PATH;
+                        ofn.Flags = OFN_EXPLORER | OFN_OVERWRITEPROMPT;
+                        ofn.lpstrDefExt = "sav";
+                        if (GetSaveFileNameA(&ofn)) {
+                            global_cart->SaveSRAM(std::string(filename));
+                            MessageBoxA(hwnd, "SRAM Saved Successfully!", "Success", MB_OK | MB_ICONINFORMATION);
+                        }
+                        is_paused = was_paused;
+                    } else {
+                        MessageBoxA(hwnd, "Please load a ROM first!", "Error", MB_OK | MB_ICONWARNING);
+                    }
+                    break;
+                }
+                case MENU_FILE_LOAD_SRAM: {
+                    if (global_cart && global_cart->isLoaded()) {
+                        bool was_paused = is_paused; is_paused = true;
+                        char filename[MAX_PATH] = "";
+                        OPENFILENAMEA ofn; ZeroMemory(&ofn, sizeof(ofn));
+                        ofn.lStructSize = sizeof(ofn); ofn.hwndOwner = hwnd;
+                        ofn.lpstrFilter = "Save RAM (*.sav)\0*.sav\0All Files (*.*)\0*.*\0";
+                        ofn.lpstrFile = filename; ofn.nMaxFile = MAX_PATH;
+                        ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST;
+                        if (GetOpenFileNameA(&ofn)) {
+                            global_cart->LoadSRAM(std::string(filename));
+                            MessageBoxA(hwnd, "SRAM Loaded Successfully!", "Success", MB_OK | MB_ICONINFORMATION);
+                        }
+                        is_paused = was_paused;
+                    } else {
+                        MessageBoxA(hwnd, "Please load a ROM first!", "Error", MB_OK | MB_ICONWARNING);
+                    }
+                    break;
+                }
                 case MENU_GAME_PAUSE:
                     if (global_cart && global_cart->isLoaded() && !hwndDialog) {
                         is_paused = !is_paused;
@@ -379,6 +421,12 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         std::cout << "Volumes updated!\n\n";
                         is_paused = was_paused;
                     }
+                    case MENU_FILE_ROM_INFO:
+                    if (global_cart && global_cart->isLoaded()) {
+                        MessageBoxA(hwnd, global_cart->getROMInfo().c_str(), "ROM Info", MB_OK | MB_ICONINFORMATION);
+                    } else {
+                        MessageBoxA(hwnd, "No ROM is currently loaded!", "ROM Info", MB_OK | MB_ICONWARNING);
+                    }
                     break;
             }
             return 0;
@@ -397,9 +445,13 @@ void SetupWindow() {
     
     hMenu = CreateMenu();
     
-    // File Menu
+    // File Menu 
     hSubMenuFile = CreatePopupMenu(); 
     AppendMenu(hSubMenuFile, MF_STRING, MENU_FILE_OPEN, "Open ROM..."); 
+    AppendMenu(hSubMenuFile, MF_STRING, MENU_FILE_ROM_INFO, "ROM Info...");
+    AppendMenu(hSubMenuFile, MF_SEPARATOR, 0, NULL); 
+    AppendMenu(hSubMenuFile, MF_STRING, MENU_FILE_SAVE_SRAM, "Save SRAM (.sav)..."); 
+    AppendMenu(hSubMenuFile, MF_STRING, MENU_FILE_LOAD_SRAM, "Load SRAM (.sav)..."); 
     AppendMenu(hSubMenuFile, MF_SEPARATOR, 0, NULL); 
     AppendMenu(hSubMenuFile, MF_STRING, MENU_FILE_LOAD_TAS, "Load TAS (.fm2)..."); 
     AppendMenu(hMenu, MF_STRING | MF_POPUP, (UINT_PTR)hSubMenuFile, "File");
@@ -441,6 +493,15 @@ void SetupWindow() {
     RECT rect = {0, 0, 768, 720}; 
     AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
     hwnd = CreateWindowEx(0, "NES_EMU", "GemNES Emulator", WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, NULL, hMenu, wc.hInstance, NULL);
+    
+    // --- ADD THIS TO LOAD CUSTOM ICON ---
+    HICON hIcon = (HICON)LoadImageA(NULL, "icon.ico", IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE | LR_SHARED);
+    if (hIcon) {
+        SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+        SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
+    }
+    // ------------------------------------
+
     hdc = GetDC(hwnd);
     
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER); 
@@ -550,10 +611,17 @@ int main() {
 
                 int cpu_cycles = nes_bus.cpu.step();
 
+                if (global_cart) global_cart->stepAudio(cpu_cycles);
+                
                 audio_time += cpu_cycles;
                 while (audio_time >= CPU_CYCLES_PER_SAMPLE) {
                     audio_time -= CPU_CYCLES_PER_SAMPLE;
+                    
                     double sample = nes_bus.apu.getOutputSample();
+
+                    if (global_cart && global_cart->isLoaded()) {
+                        sample += global_cart->getAudioSample();
+                    }
                     audioBuffer[currentBlock][sample_count] = (int16_t)((sample - 0.5) * 10000.0);
                     sample_count++;
 
