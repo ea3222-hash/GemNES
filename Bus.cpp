@@ -49,10 +49,7 @@ uint8_t Bus::cpuRead(uint16_t addr, uint8_t current_open_bus) {
         uint8_t index = addr & 0x0001;
 
         if (index == 1 && zapper_enabled) {
-            // --- ZAPPER GUN ON PORT 2 ---
             bool light_sensed = false;
-            
-            // Check a 5x5 pixel radius around the mouse pointer
             if (zapper_x >= 0 && zapper_x < 256 && zapper_y >= 0 && zapper_y < 240) {
                 int radius = 2; 
                 for (int dy = -radius; dy <= radius && !light_sensed; dy++) {
@@ -60,13 +57,10 @@ uint8_t Bus::cpuRead(uint16_t addr, uint8_t current_open_bus) {
                         int px = zapper_x + dx;
                         int py = zapper_y + dy;
                         if (px >= 0 && px < 256 && py >= 0 && py < 240) {
-                            // Extract RGB from the live PPU screen buffer
                             uint32_t pixel = ppu.screen[py * 256 + px];
                             uint8_t r = (pixel >> 16) & 0xFF;
                             uint8_t g = (pixel >> 8) & 0xFF;
                             uint8_t b = pixel & 0xFF;
-                            
-                            // If the pixel is bright (white target), light is detected
                             if (r > 100 && g > 100 && b > 100) {
                                 light_sensed = true;
                             }
@@ -74,28 +68,20 @@ uint8_t Bus::cpuRead(uint16_t addr, uint8_t current_open_bus) {
                     }
                 }
             }
-            
-            uint8_t d3 = light_sensed ? 0x00 : 0x08;   // Bit 3: 0 = Light, 1 = Dark
-            uint8_t d4 = zapper_trigger ? 0x10 : 0x00; // Bit 4: 1 = Pulled, 0 = Released
-            
+            uint8_t d3 = light_sensed ? 0x00 : 0x08;   
+            uint8_t d4 = zapper_trigger ? 0x10 : 0x00; 
             data = (current_open_bus & 0xE0) | d4 | d3;
-
         } else {
-            // --- STANDARD CONTROLLER ---
-            data = (controller_state[index] & 0x80) > 0;
             if (strobe) {
-                controller_state[index] = controller[index];
+                data = (controller[index] & 0x80) ? 1 : 0;
             } else {
+                data = (controller_state[index] & 0x80) ? 1 : 0;
                 controller_state[index] <<= 1;
                 controller_state[index] |= 1; 
             }
             data |= (current_open_bus & 0xE0); 
         }
     }
-    else if (addr >= 0x4000 && addr <= 0x5FFF) {
-        return current_open_bus;
-    }
-
     return data;
 }
 
@@ -104,31 +90,36 @@ void Bus::cpuWrite(uint16_t addr, uint8_t data) {
 
     if (cart && cart->cpuWrite(addr, data)) { } 
     else if (addr >= 0x0000 && addr <= 0x1FFF) { cpuRam[addr & 0x07FF] = data; } 
-    else if (addr >= 0x2000 && addr <= 0x3FFF) { ppu.cpuWrite(addr & 0x2007, data); }
+    else if (addr >= 0x2000 && addr <= 0x3FFF) { 
+        ppu.cpuWrite(addr & 0x2007, data); 
+        if ((addr & 0x2007) == 0x2000 && cart) {
+            cart->ppuCtrlWrite(data);
+        }
+    }
     else if (addr == 0x4014) {
         uint16_t dma_page = data << 8;
         
         int dummy_cycles = (cpu.total_cycles % 2 == 1) ? 2 : 1;
         for (int i = 0; i < dummy_cycles; i++) {
+            cpu.poll_dma(cpu.PC); 
             uint8_t dummy_data = cpuRead(cpu.PC, cpu.open_bus); 
             cpu.open_bus = dummy_data;
             if (!cpu.fceux_mode) { ppu.step(); ppu.step(); ppu.step(); apu.step(); }
-            cpu.cycles++;
-            cpu.total_cycles++;
+            cpu.cycles++; cpu.total_cycles++;
         }
 
         for (int i = 0; i < 256; i++) {
+            cpu.poll_dma(dma_page | i); 
+            
             uint8_t dma_data = cpuRead(dma_page | i, cpu.open_bus);
             cpu.open_bus = dma_data;
             if (!cpu.fceux_mode) { ppu.step(); ppu.step(); ppu.step(); apu.step(); } 
-            cpu.cycles++; 
-            cpu.total_cycles++;
+            cpu.cycles++; cpu.total_cycles++;
             
             ppu.cpuWrite(0x2004, dma_data);
             
             if (!cpu.fceux_mode) { ppu.step(); ppu.step(); ppu.step(); apu.step(); } 
-            cpu.cycles++; 
-            cpu.total_cycles++;
+            cpu.cycles++; cpu.total_cycles++;
         }
     }
     else if ((addr >= 0x4000 && addr <= 0x4013) || addr == 0x4015 || addr == 0x4017) {
