@@ -123,7 +123,7 @@ FAIL 2 : NMI Overlap BRK\
 FAIL 1 : NMI Overlap IRQ
 ### APU Registers and DMA tests
 FAIL 2 : DMA + Open bus\
-PASS : DMA + $2002 Read\
+FAIL 2 : DMA + $2002 Read\
 FAIL 2 : DMA + $2007 Read\
 FAIL 1 : DMA + $2007 Write\
 FAIL 2 : DMA + $4015 Read\
@@ -188,7 +188,7 @@ FAIL 1 : INC $4014
 ### PPU MISC.
 PASS : Attributes as tiles\
 PASS : T Register quirks\
-FAIL 4 : Stale BG shift registers\
+PASS : Stale BG shift registers\
 FAIL 3 : Stale sprite shift REGS\
 FAIL 2 : BG Serial in\
 FAIL 2 : Sprites on scanline 0\
