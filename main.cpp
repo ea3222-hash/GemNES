@@ -29,6 +29,7 @@
 #define MENU_FILE_ROM_INFO 1014
 #define MENU_FILE_SAVE_SRAM 1015
 #define MENU_FILE_LOAD_SRAM 1016
+#define MENU_GAME_WORSTNES 1017 
 
 HWND hwnd;
 HDC hdc;
@@ -191,19 +192,68 @@ std::string GetBindName(InputBind bind) {
 LRESULT CALLBACK KeybindProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
         case WM_INITDIALOG:
-            SetWindowText(hDlg, "Press key/button for A");
             current_key_mapping = 0;
             SetTimer(hDlg, 1, 16, NULL);
             return TRUE;
             
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hDlg, &ps);
+            
+            RECT rect; GetClientRect(hDlg, &rect);
+            HBRUSH bg = CreateSolidBrush(RGB(20, 20, 30)); 
+            FillRect(hdc, &rect, bg);
+            DeleteObject(bg);
+            
+            SetBkMode(hdc, TRANSPARENT);
+            HFONT hFont = CreateFontA(22, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Consolas");
+            SelectObject(hdc, hFont);
+            
+            SetTextColor(hdc, RGB(255, 200, 50));
+            TextOutA(hdc, 30, 20, "--- GEMNES CONTROLS ---", 23);
+            
+            for(int i=0; i<8; i++) {
+                int y = 70 + (i * 35);
+                
+                if (i == current_key_mapping) {
+                    SetTextColor(hdc, RGB(50, 255, 50)); 
+                } else if (i < current_key_mapping) {
+                    SetTextColor(hdc, RGB(100, 180, 255)); 
+                } else {
+                    SetTextColor(hdc, RGB(120, 120, 120)); 
+                }
+                
+                std::string label = keyNames[i];
+                while(label.length() < 7) label += " ";
+                
+                std::string bindText = "";
+                if (i < current_key_mapping) bindText = GetBindName(keybinds[i]);
+                else if (i == current_key_mapping) bindText = "Press Key/Button...";
+                else bindText = "";
+                
+                std::string line = "[ " + label + " ]  ->  " + bindText;
+                TextOutA(hdc, 30, y, line.c_str(), line.length());
+            }
+
+            SetTextColor(hdc, RGB(180, 50, 50));
+            TextOutA(hdc, 30, 350, "Press ESC to Cancel", 19);
+            
+            DeleteObject(hFont);
+            EndPaint(hDlg, &ps);
+            return TRUE;
+        }
+
         case WM_KEYDOWN:
+            if (wParam == VK_ESCAPE) {
+                DestroyWindow(hDlg);
+                return TRUE;
+            }
             keybinds[current_key_mapping] = {false, (int)wParam};
             current_key_mapping++;
             if (current_key_mapping >= 8) { 
                 DestroyWindow(hDlg); 
             } else { 
-                std::string title = "Press key/button for " + std::string(keyNames[current_key_mapping]); 
-                SetWindowText(hDlg, title.c_str()); 
+                InvalidateRect(hDlg, NULL, TRUE);
             }
             return TRUE;
 
@@ -221,8 +271,7 @@ LRESULT CALLBACK KeybindProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
                     if (current_key_mapping >= 8) { 
                         DestroyWindow(hDlg); 
                     } else { 
-                        std::string title = "Press key/button for " + std::string(keyNames[current_key_mapping]); 
-                        SetWindowText(hDlg, title.c_str()); 
+                        InvalidateRect(hDlg, NULL, TRUE);
                     }
                 }
             }
@@ -233,12 +282,6 @@ LRESULT CALLBACK KeybindProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lPar
             KillTimer(hDlg, 1);
             hwndDialog = NULL; 
             is_paused = false; 
-            
-            std::cout << "\n--- Current Controls ---\n";
-            for(int i=0; i<8; i++) {
-                std::cout << keyNames[i] << " : " << GetBindName(keybinds[i]) << "\n";
-            }
-            std::cout << "------------------------\n";
             return TRUE;
     }
     return DefWindowProc(hDlg, message, wParam, lParam);
@@ -249,7 +292,7 @@ void OpenKeybindWindow() {
     is_paused = true; 
     WNDCLASS wc = {0}; wc.lpfnWndProc = KeybindProc; wc.hInstance = GetModuleHandle(NULL); wc.lpszClassName = "KEYBIND_WND"; RegisterClass(&wc);
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
-    hwndDialog = CreateWindowEx(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "KEYBIND_WND", "Press key for A", WS_POPUPWINDOW | WS_CAPTION | WS_VISIBLE, (sw - 300) / 2, (sh - 100) / 2, 300, 100, hwnd, NULL, wc.hInstance, NULL);
+    hwndDialog = CreateWindowEx(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "KEYBIND_WND", "GemNES Setup", WS_POPUPWINDOW | WS_CAPTION | WS_VISIBLE, (sw - 400) / 2, (sh - 400) / 2, 400, 420, hwnd, NULL, wc.hInstance, NULL);
     SetFocus(hwndDialog); 
 }
 
@@ -386,6 +429,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         tas_active = false; 
                     }
                     break;
+                case MENU_GAME_WORSTNES:
+                    if (global_bus) {
+                        global_bus->worst_nes_mode = !global_bus->worst_nes_mode;
+                        CheckMenuItem(hMenu, MENU_GAME_WORSTNES, MF_BYCOMMAND | (global_bus->worst_nes_mode ? MF_CHECKED : MF_UNCHECKED));
+                        global_bus->reset(true, global_bus->cpu.fceux_mode);
+                        
+                        if (global_bus->worst_nes_mode) {
+                            MessageBoxA(hwnd, "WORSTNES ENABLED!\n\nNot accurate. But your Pentium from 2006 will survive.\n\nAll test ROMs will now fail spectacularly while normal games run blindingly fast and flawlessly.", "WorstNES Mode", MB_OK | MB_ICONEXCLAMATION);
+                        }
+                    }
+                    break;
                 case MENU_GAME_KEYS: OpenKeybindWindow(); break;
                 
                 case MENU_GAME_CONTROL_NONE:
@@ -418,6 +472,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                         std::cout << "Pulse 2 (Harmony): "; std::cin >> global_bus->apu.vol_pulse2;
                         std::cout << "Triangle (Bass): "; std::cin >> global_bus->apu.vol_triangle;
                         std::cout << "Noise (Drums): "; std::cin >> global_bus->apu.vol_noise;
+                        std::cout << "DMC (PCM/Voices): "; std::cin >> global_bus->apu.vol_dmc;
                         std::cout << "Volumes updated!\n\n";
                         is_paused = was_paused;
                     }
@@ -445,7 +500,6 @@ void SetupWindow() {
     
     hMenu = CreateMenu();
     
-    // File Menu 
     hSubMenuFile = CreatePopupMenu(); 
     AppendMenu(hSubMenuFile, MF_STRING, MENU_FILE_OPEN, "Open ROM..."); 
     AppendMenu(hSubMenuFile, MF_STRING, MENU_FILE_ROM_INFO, "ROM Info...");
@@ -456,7 +510,6 @@ void SetupWindow() {
     AppendMenu(hSubMenuFile, MF_STRING, MENU_FILE_LOAD_TAS, "Load TAS (.fm2)..."); 
     AppendMenu(hMenu, MF_STRING | MF_POPUP, (UINT_PTR)hSubMenuFile, "File");
     
-    // Game Menu
     hSubMenuGame = CreatePopupMenu(); 
     AppendMenu(hSubMenuGame, MF_STRING, MENU_GAME_PAUSE, "Pause"); 
     AppendMenu(hSubMenuGame, MF_STRING, MENU_GAME_RESET, "Reset"); 
@@ -467,8 +520,8 @@ void SetupWindow() {
     AppendMenu(hSubMenuGame, MF_STRING, MENU_GAME_KEYS, "Change Keybinds"); 
     AppendMenu(hSubMenuGame, MF_SEPARATOR, 0, NULL); 
     AppendMenu(hSubMenuGame, MF_STRING, MENU_GAME_FCEUX, "FCEUX TAS Mode"); 
+    AppendMenu(hSubMenuGame, MF_STRING, MENU_GAME_WORSTNES, "WorstNES Mode (Break Tests)");
     
-    // Control Submenu
     hSubMenuControl = CreatePopupMenu();
     AppendMenu(hSubMenuControl, MF_STRING, MENU_GAME_CONTROL_NONE, "None (Gamepad 2)");
     AppendMenu(hSubMenuControl, MF_STRING, MENU_GAME_CONTROL_ZAPPER, "Zapper Gun (Mouse)");
@@ -479,13 +532,11 @@ void SetupWindow() {
     
     AppendMenu(hMenu, MF_STRING | MF_POPUP, (UINT_PTR)hSubMenuGame, "Game");
     
-    // Cheats Menu
     hSubMenuCheats = CreatePopupMenu(); 
     AppendMenu(hSubMenuCheats, MF_STRING, MENU_CHEAT_GENIE, "Add Game Genie Code"); 
     AppendMenu(hSubMenuCheats, MF_STRING, MENU_CHEAT_CLEAR, "Clear All Cheats"); 
     AppendMenu(hMenu, MF_STRING | MF_POPUP, (UINT_PTR)hSubMenuCheats, "Cheats");
     
-    // Audio Menu
     hSubMenuAudio = CreatePopupMenu(); 
     AppendMenu(hSubMenuAudio, MF_STRING, MENU_AUDIO_VOLUMES, "Audio Mixer (Console)"); 
     AppendMenu(hMenu, MF_STRING | MF_POPUP, (UINT_PTR)hSubMenuAudio, "Audio");
@@ -494,13 +545,11 @@ void SetupWindow() {
     AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
     hwnd = CreateWindowEx(0, "NES_EMU", "GemNES Emulator", WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, rect.right - rect.left, rect.bottom - rect.top, NULL, hMenu, wc.hInstance, NULL);
     
-    // --- ADD THIS TO LOAD CUSTOM ICON ---
     HICON hIcon = (HICON)LoadImageA(NULL, "icon.ico", IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE | LR_SHARED);
     if (hIcon) {
         SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
         SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
     }
-    // ------------------------------------
 
     hdc = GetDC(hwnd);
     
@@ -680,9 +729,15 @@ int main() {
         }
         
         char fps_buffer[64];
-        if (tas_active) snprintf(fps_buffer, sizeof(fps_buffer), "TAS: %zu/%zu | FPS: %.2f", tas_frame, tas_inputs.size(), current_fps);
-        else if (should_emulate) snprintf(fps_buffer, sizeof(fps_buffer), "FPS: %.2f", current_fps);
-        else snprintf(fps_buffer, sizeof(fps_buffer), "FPS: 0.00");
+        if (global_bus && global_bus->worst_nes_mode) {
+            snprintf(fps_buffer, sizeof(fps_buffer), "WORSTNES | FPS: %.2f", current_fps);
+            SetTextColor(hdc, RGB(255, 0, 0)); 
+        } else {
+            SetTextColor(hdc, RGB(0, 255, 0));
+            if (tas_active) snprintf(fps_buffer, sizeof(fps_buffer), "TAS: %zu/%zu | Target: 60.10 Hz | FPS: %.2f", tas_frame, tas_inputs.size(), current_fps);
+            else if (should_emulate) snprintf(fps_buffer, sizeof(fps_buffer), "Target: 60.10 Hz | FPS: %.2f", current_fps);
+            else snprintf(fps_buffer, sizeof(fps_buffer), "FPS: 0.00");
+        }
         TextOut(hdc, 10, 10, fps_buffer, strlen(fps_buffer));
 
         auto frame_end = std::chrono::high_resolution_clock::now();
