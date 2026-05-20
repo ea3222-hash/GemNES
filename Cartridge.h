@@ -39,13 +39,15 @@ public:
     bool irqState() const;
     void reset();
 
-    // Expansion Audio Methods
     void stepAudio(int cycles);
     double getAudioSample();
 
     std::string getROMInfo() const;
     bool is_nes20 = false;
     uint16_t submapper_id = 0;
+    
+    // --- DIABOLICAL MODE ---
+    bool worst_nes = false;
 
 private:
     bool loaded = false;
@@ -57,7 +59,6 @@ private:
     std::vector<uint8_t> chr_memory;
     uint8_t prg_ram[131072]; 
 
-    // MMC1 & MMC3
     uint8_t load_register = 0x00, load_count = 0x00, control_register = 0x1C;
     uint8_t chr_bank_0 = 0x00, chr_bank_1 = 0x00, prg_bank = 0x00;
     uint32_t prg_offsets[2], chr_offsets[2];
@@ -73,7 +74,6 @@ private:
     void MMC3_Write(uint16_t addr, uint8_t data);
     void Update_MMC3_Offsets();
 
-    // MMC5 Variables
     uint8_t mmc5_prg_mode = 3, mmc5_chr_mode = 0, mmc5_prg_protect1 = 0, mmc5_prg_protect2 = 0;
     uint8_t mmc5_exram_mode = 0, mmc5_nt_mapping = 0, mmc5_fill_tile = 0, mmc5_fill_color = 0;
     uint8_t mmc5_prg_banks[5] = {0,0,0,0,0xFF};
@@ -88,7 +88,6 @@ private:
     uint8_t mmc5_exram[1024];
     uint8_t mmc5_ciram[2048]; 
 
-    // MMC5 Audio
     MMC5Pulse mmc5_p1, mmc5_p2;
     int mmc5_pcm = 128;
     int mmc5_audio_divider = 0;
@@ -97,7 +96,6 @@ private:
     uint32_t GetPrgRamAddr(int bank, int offset);
     bool IsPrgRamWritable();
 
-    // Mapper 69 & 90
     uint8_t fme7_command = 0; uint32_t fme7_prg_offsets[4] = {0}, fme7_chr_offsets[8] = {0}, fme7_prg_ram_offset = 0;
     uint16_t fme7_irq_counter = 0; bool fme7_irq_enable = false, fme7_irq_counter_enable = false, fme7_prg_ram_enable = false, fme7_prg_ram_rom = false;
     uint32_t map90_prg_offsets[4] = {0}, map90_chr_offsets[8] = {0};
