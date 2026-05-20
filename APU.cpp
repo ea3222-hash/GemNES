@@ -34,6 +34,7 @@ void APU::reset() {
     triangle = TriangleChannel();
     noise = NoiseChannel();
     dmc = DMCChannel(); 
+    dmc.output_level = 0; dmc.shift_register = 0; dmc.silence = true;
     clock_counter = 0;
     frame_counter = 0; 
     frame_mode = 0;
@@ -70,11 +71,9 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
             if (!dmc_irq_enable) dmc_irq = false; 
             break;
 
+        case 0x4011: dmc.output_level = data & 0x7F; break; // Raw PCM Write!
         case 0x4012: dmc.sample_address = 0xC000 | (data << 6); break;
-            
-        case 0x4013:
-            dmc.reload_length = (data * 16) + 1;
-            break;
+        case 0x4013: dmc.reload_length = (data * 16) + 1; break;
 
         case 0x4015:
             pulse1.enable = data & 0x01; if (!pulse1.enable) pulse1.length_counter = 0;
@@ -90,7 +89,7 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
                 if (dmc.length_counter == 0) {
                     dmc.length_counter = dmc.reload_length;
                     dmc.current_address = dmc.sample_address;
-                    dmc.buffer_empty = true; // Buffer empty triggers DMA
+                    dmc.buffer_empty = true; 
                 }
             }
             dmc_irq = false; 
@@ -101,7 +100,6 @@ void APU::cpuWrite(uint16_t addr, uint8_t data) {
             irq_inhibit = (data & 0x40) >> 6;
             if (irq_inhibit) irq_active = false;
             
-            // FIX: Parity swapped to 3 : 4 to fix "Early" clocking!
             frame_counter_reset_delay = (clock_counter % 2 == 0) ? 3 : 4;
             delayed_frame_mode = frame_mode;
             break;
@@ -121,8 +119,8 @@ uint8_t APU::cpuRead(uint16_t addr, uint8_t open_bus) {
         if (irq_active) data |= 0x40; 
         if (dmc_irq) data |= 0x80; 
         
-        irq_active = false; // Clears Frame IRQ
-        dmc_irq = false;    // <--- NEW FIX: Reading $4015 also clears DMC IRQ!
+        irq_active = false;
+        dmc_irq = false;    
     }
     return data;
 }
@@ -154,7 +152,6 @@ void APU::clock_lengths() {
 }
 
 void APU::step() {
-    // 1. Frame Counter Delay
     if (frame_counter_reset_delay > 0) {
         frame_counter_reset_delay--;
         if (frame_counter_reset_delay == 0) {
@@ -191,10 +188,26 @@ void APU::step() {
         dmc.timer--;
     } else {
         dmc.timer = dmc.timer_reload;
-        dmc.bit_counter++;
-        if (dmc.bit_counter >= 8) {
-            dmc.bit_counter = 0;
-            dmc.buffer_empty = true; // Output shift register consumed the buffer!
+        
+        if (!dmc.silence) {
+            if (dmc.shift_register & 1) {
+                if (dmc.output_level <= 125) dmc.output_level += 2;
+            } else {
+                if (dmc.output_level >= 2) dmc.output_level -= 2;
+            }
+        }
+        dmc.shift_register >>= 1;
+        
+        if (dmc.bit_counter > 0) dmc.bit_counter--; 
+        if (dmc.bit_counter == 0) {
+            dmc.bit_counter = 8;
+            if (!dmc.buffer_empty) {
+                dmc.silence = false;
+                dmc.shift_register = dmc.sample_buffer;
+                dmc.buffer_empty = true;
+            } else {
+                dmc.silence = true;
+            }
         }
     }
 
@@ -222,7 +235,7 @@ void APU::step() {
 }
 
 double APU::getOutputSample() {
-    double p1 = 0, p2 = 0, t = 0, n = 0;
+    double p1 = 0, p2 = 0, t = 0, n = 0, d = 0;
     
     if (pulse1.enable && pulse1.length_counter > 0 && pulse1.timer_reload > 8) 
         p1 = duty_table[pulse1.duty][pulse1.duty_seq] ? (pulse1.constant_volume ? pulse1.volume : pulse1.env_vol) : 0;
@@ -235,11 +248,15 @@ double APU::getOutputSample() {
     
     if (noise.enable && noise.length_counter > 0 && (noise.shift_register & 0x0001) == 0) 
         n = noise.constant_volume ? noise.volume : noise.env_vol;
+        
+    // Grab the PCM level
+    d = dmc.output_level;
 
     p1 *= (vol_pulse1 / 50.0);
     p2 *= (vol_pulse2 / 50.0);
     t  *= (vol_triangle / 50.0);
     n  *= (vol_noise / 50.0);
+    d  *= (vol_dmc / 50.0);
 
     double pulse_out = 0.0;
     if (p1 + p2 > 0.0) {
@@ -247,8 +264,8 @@ double APU::getOutputSample() {
     }
     
     double tnd_out = 0.0;
-    if (t + n > 0.0) {
-        tnd_out = 159.79 / ((1.0 / ((t / 8227.0) + (n / 12241.0))) + 100.0);
+    if (t + n + d > 0.0) {
+        tnd_out = 159.79 / ((1.0 / ((t / 8227.0) + (n / 12241.0) + (d / 22638.0))) + 100.0);
     }
 
     return pulse_out + tnd_out;
