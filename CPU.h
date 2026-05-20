@@ -27,6 +27,8 @@ public:
     bool irq_pending = false;
     uint8_t open_bus = 0x00;
     
+    bool worst_nes = false;
+    
     int cycles;
     uint32_t total_cycles = 0; 
 
@@ -64,7 +66,6 @@ private:
     bool page_crossed;
     bool is_write_instr[256];
     
-    // --- EXACT HARDWARE POLLING ---
     int cycle_count_this_inst = 0;
     int nmi_edge_cycle = -1;
     bool prev_nmi_line = false;
@@ -74,8 +75,6 @@ private:
     void IMP(); void IMM(); void ZP0(); void ZPX(); 
     void ZPY(); void REL(); void ABS(); void ABX(); 
     void ABY(); void IND(); void IZX(); void IZY();
-
-    void Branch(bool condition);
 
     void ADC(); void AND(); void ASL(); void BCC(); void BCS(); void BEQ(); 
     void BIT(); void BMI(); void BNE(); void BPL(); void BRK(); void BVC(); 
