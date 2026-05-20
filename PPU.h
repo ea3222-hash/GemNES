@@ -28,6 +28,8 @@ public:
     uint8_t OAM[256];
     uint8_t oam_addr = 0x00;
     uint8_t eval_oam_addr = 0x00;
+    
+    bool worst_nes = false;
 
 private:
     std::shared_ptr<Cartridge> cart;
@@ -70,10 +72,11 @@ private:
         bool isSpriteZero; 
     };
     
-    sObjectAttributeEntry spriteScanline[8];
+    // Increased to 64 to allow WorstNES to bypass limits!
+    sObjectAttributeEntry spriteScanline[64];
     uint8_t sprite_count;
-    uint8_t sprite_shifter_pattern_lo[8];
-    uint8_t sprite_shifter_pattern_hi[8];
+    uint8_t sprite_shifter_pattern_lo[64];
+    uint8_t sprite_shifter_pattern_hi[64];
     bool spriteZeroBeingRendered = false;
 
     uint32_t palScreen[0x40];
