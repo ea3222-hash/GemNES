@@ -144,7 +144,6 @@ bool Cartridge::cpuRead(uint16_t addr, uint8_t& data) {
             if (addr == 0x5205) { data = (mmc5_mult_a * mmc5_mult_b) & 0xFF; return true; }
             if (addr == 0x5206) { data = ((mmc5_mult_a * mmc5_mult_b) >> 8) & 0xFF; return true; }
             if (addr >= 0x5C00 && addr <= 0x5FFF) { 
-                // ExRAM Correct CPU Reading (Fixes Executable ExRAM test!)
                 if (mmc5_exram_mode <= 1) {
                     data = mmc5_ppu_in_frame ? 0x00 : mmc5_exram[addr - 0x5C00];
                 } else {
@@ -187,7 +186,6 @@ bool Cartridge::cpuWrite(uint16_t addr, uint8_t data) {
 
     if (addr >= 0x5000 && addr <= 0x5FFF) {
         if (mapper_id == 5) {
-            // Audio Registers
             if (addr == 0x5000) { mmc5_p1.duty = (data >> 6) & 3; mmc5_p1.halt = data & 0x20; mmc5_p1.volume = data & 0x0F; return true; }
             if (addr == 0x5002) { mmc5_p1.timer_reload = (mmc5_p1.timer_reload & 0xFF00) | data; return true; }
             if (addr == 0x5003) { mmc5_p1.timer_reload = (mmc5_p1.timer_reload & 0x00FF) | ((data & 0x07) << 8); mmc5_p1.timer = mmc5_p1.timer_reload; mmc5_p1.length = mmc5_length_table[(data >> 3) & 0x1F]; return true; }
@@ -197,7 +195,6 @@ bool Cartridge::cpuWrite(uint16_t addr, uint8_t data) {
             if (addr == 0x5011) { mmc5_pcm = data; return true; }
             if (addr == 0x5015) { mmc5_p1.enable = data & 0x01; mmc5_p2.enable = data & 0x02; return true; }
 
-            // Config Registers
             if (addr == 0x5100) { mmc5_prg_mode = data & 0x03; return true; }
             if (addr == 0x5101) { mmc5_chr_mode = data & 0x03; return true; }
             if (addr == 0x5102) { mmc5_prg_protect1 = data & 0x03; return true; }
@@ -218,7 +215,6 @@ bool Cartridge::cpuWrite(uint16_t addr, uint8_t data) {
             if (addr == 0x5206) { mmc5_mult_b = data; return true; }
             
             if (addr >= 0x5C00 && addr <= 0x5FFF) { 
-                // ExRAM Correct CPU Writing (Fixes HELLO test!)
                 if (mmc5_exram_mode <= 1) {
                     mmc5_exram[addr - 0x5C00] = mmc5_ppu_in_frame ? 0x00 : data;
                 } else {
@@ -236,6 +232,19 @@ bool Cartridge::cpuWrite(uint16_t addr, uint8_t data) {
         return false; 
     }
     else if (addr >= 0x8000) {
+        // --- WORSTNES: PRG ROM OVERWRITE TRAP ---
+        // Allows direct writing to ROM memory, failing the ROM writable test!
+        if (worst_nes && !prg_memory.empty()) {
+            if (mapper_id == 0 || mapper_id == 1 || mapper_id == 2 || mapper_id == 3 || mapper_id == 7 || mapper_id == 66) { 
+                if (addr <= 0xBFFF) prg_memory[(prg_offsets[0] + (addr & 0x3FFF)) % prg_memory.size()] = data;
+                else prg_memory[(prg_offsets[1] + (addr & 0x3FFF)) % prg_memory.size()] = data;
+            } 
+            else if (mapper_id == 4) { 
+                uint8_t bank = (addr - 0x8000) / 0x2000; 
+                prg_memory[(mmc3_prg_offsets[bank] + (addr & 0x1FFF)) % prg_memory.size()] = data;
+            } 
+        }
+
         if (mapper_id == 1) MMC1_Write(addr, data); 
         else if (mapper_id == 4) MMC3_Write(addr, data); 
         else if (mapper_id == 2) { prg_offsets[0] = (data & 0x0F) * 16384; }
@@ -316,7 +325,10 @@ bool Cartridge::ppuWrite(uint16_t addr, uint8_t data) {
             return true;
         }
     }
-    if (chr_banks == 0 && addr <= 0x1FFF) {
+    
+    // WORSTNES DIABOLICAL TRAP
+    // If WorstNES is on, we let CHR ROM writes pass perfectly fine. Test ROMs will hate this.
+    if ((worst_nes || chr_banks == 0) && addr <= 0x1FFF) {
         if (mapper_id == 0 || mapper_id == 1 || mapper_id == 2 || mapper_id == 3 || mapper_id == 7 || mapper_id == 5) { if (addr < 0x1000) chr_memory[(chr_offsets[0] + (addr & 0x0FFF)) % chr_memory.size()] = data; else chr_memory[(chr_offsets[1] + (addr & 0x0FFF)) % chr_memory.size()] = data; } 
         else if (mapper_id == 4) { uint8_t bank = addr >> 10; chr_memory[(mmc3_chr_offsets[bank] + (addr & 0x03FF)) % chr_memory.size()] = data; } return true;
     }
