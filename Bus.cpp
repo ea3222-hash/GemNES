@@ -17,6 +17,11 @@ void Bus::insertCartridge(const std::shared_ptr<Cartridge>& cartridge) {
 }
 
 void Bus::reset(bool hard, bool fceux_mode) {
+    cpu.worst_nes = worst_nes_mode;
+    ppu.worst_nes = worst_nes_mode;
+    apu.worst_nes = worst_nes_mode;
+    if (cart) cart->worst_nes = worst_nes_mode; // Make sure the Cartridge knows!
+    
     cpu.reset();
     ppu.reset(fceux_mode); 
     apu.reset();
@@ -24,7 +29,11 @@ void Bus::reset(bool hard, bool fceux_mode) {
     
     if (hard) {
         for (int i = 0; i < 2048; i++) {
-            cpuRam[i] = (i & 0x04) ? 0xFF : 0x00;
+            if (worst_nes_mode) {
+                cpuRam[i] = rand() % 256; 
+            } else {
+                cpuRam[i] = (i & 0x04) ? 0xFF : 0x00;
+            }
         }
     }
     
