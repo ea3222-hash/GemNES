@@ -29,15 +29,20 @@ struct DMCChannel {
     uint16_t reload_length = 1;
     uint16_t timer = 0;
     uint16_t timer_reload = 428;
-    uint8_t bit_counter = 0;
+    uint8_t bit_counter = 8;
     bool loop = false;
     
-    // --- NEW DMA VARIABLES ---
+    // DMA Variables
     uint16_t sample_address = 0xC000;
     uint16_t current_address = 0xC000;
     uint8_t sample_buffer = 0;
     bool buffer_empty = true;
     bool dma_pending = false;
+
+    // Output Variables
+    uint8_t output_level = 0;
+    uint8_t shift_register = 0;
+    bool silence = true;
 };
 
 class APU {
@@ -55,11 +60,13 @@ public:
     bool irq_active = false;
     bool dmc_irq = false; 
     bool dmc_irq_enable = false;
+    bool worst_nes = false; // <-- Added to fix compilation!
 
     float vol_pulse1 = 50.0f;
     float vol_pulse2 = 50.0f;
     float vol_triangle = 50.0f;
     float vol_noise = 50.0f;
+    float vol_dmc = 50.0f;
 
     DMCChannel dmc;
 
