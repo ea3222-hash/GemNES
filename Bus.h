@@ -10,7 +10,6 @@
 #include "Cartridge.h"
 #include "APU.h"
 
-// Game Genie Struct
 struct CheatCode {
     uint16_t address;
     uint8_t data;
@@ -37,16 +36,17 @@ public:
     void insertCartridge(const std::shared_ptr<Cartridge>& cartridge);
     void reset(bool hard = true, bool fceux_mode = false);
 
-    // Game Genie Functions
     std::vector<CheatCode> cheats;
     void addCheat(const std::string& code);
     void clearCheats();
 
-    // Zapper Gun Properties
     bool zapper_enabled = false;
     int zapper_x = 0;
     int zapper_y = 0;
     bool zapper_trigger = false;
+
+    // --- DIABOLICAL MODE ---
+    bool worst_nes_mode = false;
 
 private:
     uint8_t controller_state[2]; 
